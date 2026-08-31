@@ -39,6 +39,7 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		newInitCommand(a),
 		newConfigCommand(a),
 		newBuildCommand(a),
+		newStartCommand(a),
 	)
 
 	return root
@@ -47,12 +48,12 @@ func NewRootCommand(a *app.App) *cobra.Command {
 func Execute(version, commit, date string) error {
 	a, err := app.New(version, commit, date)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, ui.Error.Render("Error: "+err.Error()))
+		fmt.Fprintln(os.Stderr, ui.RenderError(err))
 		return err
 	}
 
 	if err := NewRootCommand(a).Execute(); err != nil {
-		fmt.Fprintln(a.Err, ui.Error.Render("Error: "+err.Error()))
+		fmt.Fprintln(a.Err, ui.RenderError(err))
 		return err
 	}
 	return nil

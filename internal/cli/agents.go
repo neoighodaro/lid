@@ -15,8 +15,8 @@ func warnUnverifiedAgent(a *app.App, cfg *config.Config) {
 	if config.AgentVerified(cfg.Agent) {
 		return
 	}
-	fmt.Fprintln(a.Err, ui.Warn.Render(
+	fmt.Fprintln(a.Err, ui.Err.Warn.Render(
 		"lid is not verified with the "+cfg.Agent+" agent; no agent-specific setup is applied."))
-	fmt.Fprintln(a.Err, ui.Info.Render(
+	fmt.Fprintln(a.Err, ui.Err.Info.Render(
 		"  Verified: "+strings.Join(config.VerifiedAgents, ", ")))
 }

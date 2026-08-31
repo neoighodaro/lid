@@ -620,3 +620,73 @@ func TestBuildRefusesACustomTemplate(t *testing.T) {
 		t.Errorf("error = %v, want it to name the template", err)
 	}
 }
+
+func TestStartPrintRendersTheNonoProfile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\n")
+
+	got, err := run(t, dir, "start", "--print")
+	if err != nil {
+		t.Fatalf("start --print: %v\n%s", err, got.err)
+	}
+	for _, want := range []string{`"extends": "default"`, `"name": "api"`, `"network_profile": "minimal"`} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output missing %q:\n%s", want, got.out)
+		}
+	}
+}
+
+func TestStartPrintWarnsOnStderrNotStdout(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\nmemory: be nice\n")
+
+	got, err := run(t, dir, "start", "--print")
+	if err != nil {
+		t.Fatalf("start --print: %v", err)
+	}
+	if !strings.Contains(got.err, "memory") {
+		t.Errorf("stderr does not warn about the ignored key:\n%s", got.err)
+	}
+	if strings.Contains(got.out, "memory") {
+		t.Errorf("a warning leaked into the profile on stdout:\n%s", got.out)
+	}
+}
+
+func TestStartPointsAnImageBackendAtBuild(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+
+	_, err := run(t, dir, "start", "--print")
+	if err == nil {
+		t.Fatal("start --print: want an error for the sbx backend")
+	}
+	if !strings.Contains(err.Error(), "lid build") {
+		t.Errorf("error = %v, want it to point at the command that renders an image", err)
+	}
+}
+
+func TestStartWithoutPrintSaysProvisioningIsNotWiredUpYet(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\n")
+
+	_, err := run(t, dir, "start")
+	if err == nil {
+		t.Fatal("start: want an error while provisioning is unimplemented")
+	}
+	if !strings.Contains(err.Error(), "--print") {
+		t.Errorf("error = %v, want it to name the flag that does work", err)
+	}
+}
+
+func TestStartRefusesAnAgentNonoCannotSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\nagent: gemini\n")
+
+	_, err := run(t, dir, "start", "--print")
+	if err == nil {
+		t.Fatal("start --print: want an error for an unsupported agent")
+	}
+	if !strings.Contains(err.Error(), "gemini") {
+		t.Errorf("error = %v, want it to name the agent", err)
+	}
+}

@@ -1,9 +1,18 @@
 package ui
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"bytes"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 func TestRenderLogoIsSixLines(t *testing.T) {
@@ -21,8 +30,8 @@ func TestRenderLogoIsSixLines(t *testing.T) {
 func TestStylesPreserveContent(t *testing.T) {
 	for name, render := range map[string]func(...string) string{
 		"Success": Success.Render,
-		"Error":   Error.Render,
-		"Warn":    Warn.Render,
+		"Error":   Err.Error.Render,
+		"Warn":    Err.Warn.Render,
 		"Info":    Info.Render,
 		"Accent":  Accent.Render,
 		"Bold":    Bold.Render,
@@ -141,5 +150,142 @@ func TestRenderBannerContainsLogo(t *testing.T) {
 		if !strings.Contains(got, strings.TrimSpace(line)) {
 			t.Errorf("banner missing logo line %q", line)
 		}
+	}
+}
+
+func TestRenderErrorPutsTheProblemLocationAndFixOnSeparateLines(t *testing.T) {
+	out := RenderError(&failure.Error{
+		What: "the nono backend cannot use packages",
+		In:   ".config/lid/lid.yaml",
+		Fix:  "install them on your host, or set backend: sbx",
+	})
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("want problem, a blank line, then the two labelled lines, got:\n%s", out)
+	}
+	if strings.TrimSpace(lines[1]) != "" {
+		t.Errorf("no blank line separating the problem from its details:\n%s", out)
+	}
+	if strings.TrimSpace(lines[3]) == "" {
+		t.Errorf("the details are not adjacent lines:\n%s", out)
+	}
+	if !strings.Contains(lines[0], "cannot use packages") {
+		t.Errorf("first line is not the problem:\n%s", out)
+	}
+	if strings.Contains(lines[0], ".config/lid/lid.yaml") {
+		t.Errorf("the path crowds the problem line:\n%s", out)
+	}
+	for _, want := range []string{".config/lid/lid.yaml", "install them on your host"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderErrorLabelsTheLocationAndTheFix(t *testing.T) {
+	out := RenderError(&failure.Error{What: "boom", In: "lid.yaml", Fix: "duck"})
+
+	for _, want := range []string{"in", "fix"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output has no %q label:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderErrorOmitsPartsThatAreEmpty(t *testing.T) {
+	out := RenderError(&failure.Error{What: "no lid.yaml found"})
+
+	if strings.Contains(out, "fix") || strings.Contains(out, "in ") {
+		t.Errorf("output invents labels for parts that are missing:\n%s", out)
+	}
+	if !strings.Contains(out, "no lid.yaml found") {
+		t.Errorf("output lost the problem:\n%s", out)
+	}
+}
+
+func TestRenderErrorHandlesAPlainError(t *testing.T) {
+	out := RenderError(errors.New("something broke"))
+
+	if !strings.Contains(out, "something broke") {
+		t.Errorf("plain error lost its message:\n%s", out)
+	}
+	if strings.Count(strings.TrimSpace(out), "\n") != 0 {
+		t.Errorf("a plain error should stay on one line:\n%s", out)
+	}
+}
+
+func TestRenderErrorFindsAFailureThroughAWrap(t *testing.T) {
+	out := RenderError(fmt.Errorf("start: %w", &failure.Error{What: "boom", Fix: "duck"}))
+
+	if !strings.Contains(out, "duck") {
+		t.Errorf("wrapped failure rendered without its fix:\n%s", out)
+	}
+}
+
+func forcedStyles() Styles {
+	r := lipgloss.NewRenderer(&bytes.Buffer{})
+	r.SetColorProfile(termenv.TrueColor)
+	return newStyles(r)
+}
+
+var sgrRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// paints returns the distinct colour sequences in s, in order of appearance.
+func paints(s string) []string {
+	var seen []string
+	for _, code := range sgrRe.FindAllString(s, -1) {
+		if code == "\x1b[0m" || code == "\x1b[m" {
+			continue
+		}
+		if !slices.Contains(seen, code) {
+			seen = append(seen, code)
+		}
+	}
+	return seen
+}
+
+func TestRenderErrorColoursTheProblemLocationAndFixDifferently(t *testing.T) {
+	out := renderError(forcedStyles(), &failure.Error{What: "boom", In: "lid.yaml", Fix: "duck"})
+
+	if len(paints(out)) < 4 {
+		t.Fatalf("want the tag, problem, labels and values painted apart, got %d colours:\n%q", len(paints(out)), out)
+	}
+
+	lines := strings.Split(out, "\n")
+	for _, line := range lines[2:] {
+		colours := paints(line)
+		if len(colours) < 2 {
+			t.Errorf("label and value share a colour on %q", line)
+		}
+	}
+	if in, fix := paints(lines[2]), paints(lines[3]); in[len(in)-1] == fix[len(fix)-1] {
+		t.Errorf("the location and the fix are painted the same:\n%q", out)
+	}
+}
+
+func TestRenderErrorKeepsTheProblemReadableRatherThanAllRed(t *testing.T) {
+	out := renderError(forcedStyles(), &failure.Error{What: "boom", In: "lid.yaml"})
+
+	first := strings.Split(out, "\n")[0]
+	if len(paints(first)) < 2 {
+		t.Errorf("the whole problem line is one colour, so the tag does not stand out:\n%q", first)
+	}
+}
+
+func TestRenderErrorPaintsAPlainError(t *testing.T) {
+	out := renderError(forcedStyles(), errors.New("something broke"))
+
+	if len(paints(out)) == 0 {
+		t.Errorf("a plain error rendered without colour:\n%q", out)
+	}
+}
+
+func TestStderrStylesDetectColourFromStderr(t *testing.T) {
+	if Err.stream != os.Stderr {
+		t.Error("diagnostic styles do not detect colour from stderr, so redirecting stdout would silence them")
+	}
+	if Out.stream != os.Stdout {
+		t.Error("result styles do not detect colour from stdout")
 	}
 }

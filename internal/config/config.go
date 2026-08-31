@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/envfile"
+	"github.com/neoighodaro/lid/internal/failure"
 	"gopkg.in/yaml.v3"
 )
 
@@ -171,7 +172,7 @@ func Discover(projectDir string) (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("no lid.yaml found in %s. Run 'lid init' to create one", projectDir)
+	return "", failure.New("no lid.yaml found").At(projectDir).WithFix("run 'lid init' to create one")
 }
 
 // Resolve returns the config path to use: override when set, else discovery.
@@ -220,7 +221,7 @@ func Parse(path string) (*Config, error) {
 	dec := yaml.NewDecoder(f)
 	dec.KnownFields(true)
 	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parse %s: %s", path, cleanYAMLError(err))
+		return nil, failure.New("%s", cleanYAMLError(err)).At(cfg.Ref())
 	}
 
 	if cfg.Agent == "" {
@@ -234,6 +235,13 @@ func Parse(path string) (*Config, error) {
 	}
 
 	if err := cfg.Validate(); err != nil {
+		var f *failure.Error
+		if errors.As(err, &f) {
+			if f.In == "" {
+				f.In = cfg.Ref()
+			}
+			return nil, err
+		}
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
@@ -289,7 +297,7 @@ func (c *Config) Validate() error {
 	}
 
 	if !contains(Backends, c.Backend) {
-		return fmt.Errorf("unknown backend %q: must be one of %s", c.Backend, strings.Join(Backends, ", "))
+		return failure.New("unknown backend %q", c.Backend).WithFix("use one of %s", strings.Join(Backends, ", "))
 	}
 
 	if err := c.validateBackendExclusions(); err != nil {
@@ -302,7 +310,7 @@ func (c *Config) Validate() error {
 
 	for name := range c.Runtimes {
 		if !contains(Runtimes, name) {
-			return fmt.Errorf("unknown runtime %q: must be one of %s", name, strings.Join(Runtimes, ", "))
+			return failure.New("unknown runtime %q", name).WithFix("use one of %s", strings.Join(Runtimes, ", "))
 		}
 	}
 	if _, hasPnpm := c.Runtimes["pnpm"]; hasPnpm {
@@ -365,7 +373,7 @@ func (c *Config) validateBackendExclusions() error {
 		{"ports", len(c.Ports) > 0, "a nono session shares the host network, so ports need no publishing"},
 	} {
 		if conflict.set {
-			return fmt.Errorf("the %s backend cannot use %s: %s", c.Backend, conflict.field, conflict.why)
+			return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).WithFix("%s, or switch to the %s backend", conflict.why, BackendSbx)
 		}
 	}
 	return nil
@@ -385,7 +393,7 @@ func (c *Config) validateTemplateExclusions() error {
 		{"bridges", len(c.Bridges) > 0, "a custom template controls its own socat setup and session hooks"},
 	} {
 		if conflict.set {
-			return fmt.Errorf("cannot set both template and %s: %s", conflict.field, conflict.why)
+			return failure.New("template and %s cannot both be set", conflict.field).WithFix("%s", conflict.why)
 		}
 	}
 	return nil
@@ -448,6 +456,15 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// Ref names the config relative to the project, so generated files and error
+// messages never carry an absolute path from the machine that produced them.
+func (c *Config) Ref() string {
+	if rel, err := filepath.Rel(c.ProjectDir, c.Path); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return filepath.Base(c.Path)
 }
 
 func (c *Config) KitDir() string {

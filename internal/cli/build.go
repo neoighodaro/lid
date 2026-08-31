@@ -53,5 +53,5 @@ func warnIgnoredClaudeConfig(a *app.App, cfg *config.Config) {
 	if config.IsClaudeAgent(cfg.Agent) || !cfg.Claude.IsSet() {
 		return
 	}
-	fmt.Fprintln(a.Err, ui.Warn.Render("ignoring the claude: section: it only applies to the claude-code agent, and this project uses "+cfg.Agent+"."))
+	fmt.Fprintln(a.Err, ui.Err.Warn.Render("ignoring the claude: section: it only applies to the claude-code agent, and this project uses "+cfg.Agent+"."))
 }

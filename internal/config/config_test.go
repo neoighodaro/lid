@@ -1,10 +1,13 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 func write(t *testing.T, dir, rel, body string) {
@@ -880,5 +883,84 @@ func TestIsClaudeAgent(t *testing.T) {
 		if agent != AgentClaudeCode && IsClaudeAgent(agent) {
 			t.Errorf("IsClaudeAgent(%q) = true", agent)
 		}
+	}
+}
+
+func TestConfigErrorsCarryTheirLocationAndFix(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"backend exclusion", "name: lid\nbackend: nono\npackages:\n  - ripgrep\n", "packages"},
+		{"unknown backend", "name: lid\nbackend: sbxx\n", "backend"},
+		{"unknown runtime", "name: lid\nruntimes:\n  cobol: \"85\"\n", "cobol"},
+		{"template exclusion", "name: lid\ntemplate: Dockerfile\npackages:\n  - ripgrep\n", "packages"},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "lid.yaml")
+		if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Parse(path)
+		if err == nil {
+			t.Fatalf("%s: Parse succeeded", tc.name)
+		}
+
+		var f *failure.Error
+		if !errors.As(err, &f) {
+			t.Errorf("%s: error is not a failure.Error: %v", tc.name, err)
+			continue
+		}
+		if f.In != "lid.yaml" {
+			t.Errorf("%s: In = %q, want the config relative to the project", tc.name, f.In)
+		}
+		if f.Fix == "" {
+			t.Errorf("%s: no fix offered for %q", tc.name, f.What)
+		}
+		if !strings.Contains(f.What, tc.want) {
+			t.Errorf("%s: What = %q, want it to mention %q", tc.name, f.What, tc.want)
+		}
+	}
+}
+
+func TestRefNamesTheConfigRelativeToTheProject(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, ".config", "lid")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(nested, "lid.yaml")
+	if err := os.WriteFile(path, []byte("name: lid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Ref(); got != filepath.Join(".config", "lid", "lid.yaml") {
+		t.Errorf("Ref() = %q, want the path relative to the project", got)
+	}
+}
+
+func TestMissingConfigPutsTheDirectoryInTheLocationNotTheProblem(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := Load(dir, "")
+	if err == nil {
+		t.Fatal("Load succeeded with no config present")
+	}
+
+	var f *failure.Error
+	if !errors.As(err, &f) {
+		t.Fatalf("error is not a failure.Error: %v", err)
+	}
+	if strings.Contains(f.What, dir) {
+		t.Errorf("the directory crowds the problem line: %q", f.What)
+	}
+	if f.In != dir {
+		t.Errorf("In = %q, want the directory searched", f.In)
 	}
 }

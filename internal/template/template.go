@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 	"github.com/neoighodaro/lid/internal/runtime"
 )
 
@@ -27,7 +28,9 @@ type data struct {
 
 func Render(cfg *config.Config) (string, error) {
 	if !cfg.BuildsImage() {
-		return "", fmt.Errorf("the %s backend builds no image, so there is no Dockerfile to render", cfg.Backend)
+		return "", failure.New("the %s backend builds no image, so there is no Dockerfile to render", cfg.Backend).
+			At(cfg.Ref()).
+			WithFix("run 'lid start' instead")
 	}
 	if cfg.Template != "" {
 		return "", fmt.Errorf("template %q is yours to build: lid only generates a Dockerfile when no template is set", cfg.Template)
