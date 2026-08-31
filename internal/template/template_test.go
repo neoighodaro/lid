@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 	"github.com/neoighodaro/lid/internal/runtime"
 )
 
@@ -319,5 +320,19 @@ func TestRenderSelectsTheLocaleItGenerates(t *testing.T) {
 	}
 	if !strings.Contains(out, "ENV LANG=en_US.UTF-8") {
 		t.Errorf("locale is generated but never selected, so the sandbox runs under C:\n%s", out)
+	}
+}
+
+func TestRenderNamesTheConfigWhenARuntimeVersionIsWrong(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nruntimes:\n  php: \"8.5.1\"\n")
+
+	_, err := Render(cfg)
+
+	var f *failure.Error
+	if !errors.As(err, &f) {
+		t.Fatalf("error is not a *failure.Error: %v", err)
+	}
+	if f.In == "" {
+		t.Errorf("the error does not say which file to edit: %+v", f)
 	}
 }

@@ -964,3 +964,68 @@ func TestMissingConfigPutsTheDirectoryInTheLocationNotTheProblem(t *testing.T) {
 		t.Errorf("In = %q, want the directory searched", f.In)
 	}
 }
+
+func TestEveryConfigErrorArrivesAsAFailureWithItsLocation(t *testing.T) {
+	for _, body := range []string{
+		"agent: claude-code\n",
+		"name: Bad Name\n",
+		"name: " + strings.Repeat("a", MaxNameLen+1) + "\n",
+		"name: lid\nagent: nonesuch\n",
+		"name: lid\nbackend: podman\n",
+		"name: lid\nruntimes:\n  perl: \"5\"\n",
+		"name: lid\nruntimes:\n  pnpm: \"10\"\n",
+		"name: lid\nworkspace: relative/path\n",
+		"name: lid\nnetwork:\n  - https://example.com\n",
+		"name: lid\nnetwork:\n  - \"\"\n",
+		"name: lid\nhandoff:\n  enabled: true\n  url: nope\n",
+		"name: lid\nports:\n  - 99999\n",
+		"name: lid\nports:\n  - not-a-port\n",
+		"name: lid\nbridges:\n  - port: 5432\n    host_port: 5432\n",
+		"name: lid\nbridges:\n  - name: db\n    port: 0\n    host_port: 5432\n",
+		"name: lid\nbridges:\n  - name: db\n    port: 5432\n    host_port: 0\n",
+		"name: lid\nnot_a_field: 1\n",
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "lid.yaml")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Parse(path)
+		if err == nil {
+			t.Errorf("config accepted:\n%s", body)
+			continue
+		}
+
+		var f *failure.Error
+		if !errors.As(err, &f) {
+			t.Errorf("error renders as one flat line (%v) for:\n%s", err, body)
+			continue
+		}
+		if f.In == "" {
+			t.Errorf("error does not say which file it came from (%v) for:\n%s", err, body)
+		}
+	}
+}
+
+func TestResolvedEnvNamesTheEnvFileEntryAsWritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lid.yaml")
+	if err := os.WriteFile(path, []byte("name: lid\nenv_file:\n  - .env.missing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	_, err = cfg.ResolvedEnv()
+
+	var f *failure.Error
+	if !errors.As(err, &f) {
+		t.Fatalf("error is not a *failure.Error: %v", err)
+	}
+	if f.In != ".env.missing" {
+		t.Errorf("In = %q, want the env_file entry as written in the config", f.In)
+	}
+}

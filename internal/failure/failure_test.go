@@ -51,3 +51,33 @@ func TestLocationAndFixAreChainable(t *testing.T) {
 		t.Errorf("chained builder lost data: %+v", err)
 	}
 }
+
+func TestAtNamesALocationTheValidatorDidNotKnow(t *testing.T) {
+	err := At(New("boom"), "lid.yaml")
+
+	var f *Error
+	if !errors.As(err, &f) {
+		t.Fatalf("At lost the failure: %v", err)
+	}
+	if f.In != "lid.yaml" {
+		t.Errorf("In = %q, want lid.yaml", f.In)
+	}
+}
+
+func TestAtLeavesALocationTheErrorAlreadyKnows(t *testing.T) {
+	err := At(New("boom").At(".env"), "lid.yaml")
+
+	var f *Error
+	errors.As(err, &f)
+	if f.In != ".env" {
+		t.Errorf("In = %q, want the location the error already carried", f.In)
+	}
+}
+
+func TestAtPassesAPlainErrorThrough(t *testing.T) {
+	plain := errors.New("boom")
+
+	if got := At(plain, "lid.yaml"); got != plain {
+		t.Errorf("At returned %v, want the error unchanged", got)
+	}
+}

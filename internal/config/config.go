@@ -182,10 +182,11 @@ func Resolve(projectDir, override string) (string, error) {
 	}
 	info, err := os.Stat(override)
 	if err != nil {
-		return "", fmt.Errorf("config file %s: %w", override, err)
+		return "", failure.New("cannot read the config passed to --config").At(override).WithFix("%v", err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("config file %s is a directory", override)
+		return "", failure.New("the path passed to --config is a directory").At(override).
+			WithFix("point it at the lid.yaml inside")
 	}
 	return override, nil
 }
@@ -212,7 +213,7 @@ func Load(projectDir, override string) (*Config, error) {
 func Parse(path string) (*Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, failure.New("cannot read the config").At(path).WithFix("%v", err)
 	}
 	defer f.Close()
 
@@ -236,13 +237,10 @@ func Parse(path string) (*Config, error) {
 
 	if err := cfg.Validate(); err != nil {
 		var f *failure.Error
-		if errors.As(err, &f) {
-			if f.In == "" {
-				f.In = cfg.Ref()
-			}
-			return nil, err
+		if !errors.As(err, &f) {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, failure.At(err, cfg.Ref())
 	}
 	return cfg, nil
 }
@@ -276,13 +274,15 @@ func cleanYAMLError(err error) string {
 
 func ValidateName(name string) error {
 	if name == "" {
-		return errors.New("name is required")
+		return failure.New("no name set").WithFix("add 'name: my-project'")
 	}
 	if len(name) > MaxNameLen {
-		return fmt.Errorf("name %q is %d characters; the limit is %d", name, len(name), MaxNameLen)
+		return failure.New("name %q is %d characters", name, len(name)).
+			WithFix("shorten it to %d or fewer", MaxNameLen)
 	}
 	if !nameRe.MatchString(name) {
-		return fmt.Errorf("name %q must be lowercase alphanumeric with dashes, starting and ending with a letter or digit", name)
+		return failure.New("name %q is not usable as a sandbox name", name).
+			WithFix("use lowercase letters, digits and dashes, starting and ending with a letter or digit")
 	}
 	return nil
 }
@@ -293,7 +293,7 @@ func (c *Config) Validate() error {
 	}
 
 	if !contains(KnownAgents, c.Agent) {
-		return fmt.Errorf("unknown agent %q: must be one of %s", c.Agent, strings.Join(KnownAgents, ", "))
+		return failure.New("unknown agent %q", c.Agent).WithFix("use one of %s", strings.Join(KnownAgents, ", "))
 	}
 
 	if !contains(Backends, c.Backend) {
@@ -315,12 +315,13 @@ func (c *Config) Validate() error {
 	}
 	if _, hasPnpm := c.Runtimes["pnpm"]; hasPnpm {
 		if _, hasNode := c.Runtimes["node"]; !hasNode {
-			return errors.New("the pnpm runtime requires node: add node to runtimes")
+			return failure.New("the pnpm runtime requires node").WithFix("add node to runtimes")
 		}
 	}
 
 	if c.Workspace != "" && !filepath.IsAbs(c.Workspace) {
-		return fmt.Errorf("workspace %q must be an absolute path inside the sandbox", c.Workspace)
+		return failure.New("workspace %q is not an absolute path", c.Workspace).
+			WithFix("workspace is a path inside the sandbox, so start it with /")
 	}
 
 	for _, port := range c.Ports {
@@ -331,17 +332,19 @@ func (c *Config) Validate() error {
 
 	for _, domain := range c.Network {
 		if domain == "" {
-			return errors.New("network entries must not be empty")
+			return failure.New("a network entry is empty").WithFix("remove it, or name the host it should allow")
 		}
 		if strings.Contains(domain, "://") {
-			return fmt.Errorf("network entry %q must be a host pattern, not a URL", domain)
+			return failure.New("network entry %q is a URL", domain).
+				WithFix("drop the scheme and use a host pattern, like 'example.com' or '*.example.com'")
 		}
 	}
 
 	if c.Handoff.URL != "" {
 		u, err := url.Parse(c.Handoff.URL)
 		if err != nil || u.Host == "" || u.Port() == "" {
-			return fmt.Errorf("invalid handoff url %q: must include a host and port", c.Handoff.URL)
+			return failure.New("handoff url %q has no host and port", c.Handoff.URL).
+				WithFix("write it as http://host:port")
 		}
 	}
 
@@ -401,16 +404,20 @@ func (c *Config) validateTemplateExclusions() error {
 
 func (b Bridge) validate() error {
 	if b.Name == "" {
-		return errors.New("bridge is missing name, the hostname the app connects to")
+		return failure.New("a bridge has no name").
+			WithFix("name is the hostname the app connects to, like 'name: postgres'")
 	}
 	if !hostnameRe.MatchString(b.Name) {
-		return fmt.Errorf("invalid bridge name %q: must be a valid hostname", b.Name)
+		return failure.New("bridge name %q is not a hostname", b.Name).
+			WithFix("use letters, digits, dashes and dots")
 	}
 	if !validPortNumber(b.Port) {
-		return fmt.Errorf("invalid bridge %q port %d: must be between 1 and 65535", b.Name, b.Port)
+		return failure.New("bridge %q has port %d", b.Name, b.Port).
+			WithFix("ports run from 1 to 65535")
 	}
 	if !validPortNumber(b.HostPort) {
-		return fmt.Errorf("invalid bridge %q host_port %d: must be between 1 and 65535", b.Name, b.HostPort)
+		return failure.New("bridge %q has host_port %d", b.Name, b.HostPort).
+			WithFix("ports run from 1 to 65535")
 	}
 	return nil
 }
@@ -418,7 +425,8 @@ func (b Bridge) validate() error {
 func validatePort(port string) error {
 	m := portRe.FindStringSubmatch(port)
 	if m == nil {
-		return fmt.Errorf("invalid port %q: use PORT, HOST:PORT, or HOST:PORT/PROTOCOL", port)
+		return failure.New("port %q is not a port mapping", port).
+			WithFix("write it as PORT, HOST:PORT, or HOST:PORT/PROTOCOL")
 	}
 	for _, field := range []string{m[1], m[2]} {
 		if field == "" {
@@ -426,7 +434,7 @@ func validatePort(port string) error {
 		}
 		n, err := strconv.Atoi(field)
 		if err != nil || !validPortNumber(n) {
-			return fmt.Errorf("invalid port %q: must be between 1 and 65535", port)
+			return failure.New("port %q is out of range", port).WithFix("ports run from 1 to 65535")
 		}
 	}
 	return nil
@@ -478,7 +486,7 @@ func (c *Config) SandboxImageName() string {
 func (c *Config) FileHash() (string, error) {
 	data, err := os.ReadFile(c.Path)
 	if err != nil {
-		return "", fmt.Errorf("cannot hash %s: %w", c.Path, err)
+		return "", failure.New("cannot read the config to hash it").At(c.Ref()).WithFix("%v", err)
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
@@ -497,6 +505,10 @@ func (c *Config) ResolvedEnv() (map[string]string, error) {
 		}
 		parsed, err := envfile.Parse(path)
 		if err != nil {
+			var f *failure.Error
+			if errors.As(err, &f) {
+				f.In = entry
+			}
 			return nil, err
 		}
 		for k, v := range parsed {

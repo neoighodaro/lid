@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -45,16 +46,25 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	return root
 }
 
-func Execute(version, commit, date string) error {
+func Execute(version, commit, date string) int {
 	a, err := app.New(version, commit, date)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, ui.RenderError(err))
-		return err
+		return 1
+	}
+	return exitCode(a, NewRootCommand(a).Execute())
+}
+
+func exitCode(a *app.App, err error) int {
+	if err == nil {
+		return 0
 	}
 
-	if err := NewRootCommand(a).Execute(); err != nil {
-		fmt.Fprintln(a.Err, ui.RenderError(err))
-		return err
+	var exit *app.ExitError
+	if errors.As(err, &exit) {
+		return exit.Code
 	}
-	return nil
+
+	fmt.Fprintln(a.Err, ui.RenderError(err))
+	return 1
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/neoighodaro/lid/internal/app"
+	"github.com/neoighodaro/lid/internal/backend"
 )
 
 func write(t *testing.T, dir, rel, body string) {
@@ -665,19 +666,6 @@ func TestStartPointsAnImageBackendAtBuild(t *testing.T) {
 	}
 }
 
-func TestStartWithoutPrintSaysProvisioningIsNotWiredUpYet(t *testing.T) {
-	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\nbackend: nono\n")
-
-	_, err := run(t, dir, "start")
-	if err == nil {
-		t.Fatal("start: want an error while provisioning is unimplemented")
-	}
-	if !strings.Contains(err.Error(), "--print") {
-		t.Errorf("error = %v, want it to name the flag that does work", err)
-	}
-}
-
 func TestStartRefusesAnAgentNonoCannotSandbox(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "lid.yaml", "name: api\nbackend: nono\nagent: gemini\n")
@@ -688,5 +676,211 @@ func TestStartRefusesAnAgentNonoCannotSandbox(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gemini") {
 		t.Errorf("error = %v, want it to name the agent", err)
+	}
+}
+
+// startHost stands in for a machine with nono installed, recording the probes
+// lid runs and the command it finally hands the terminal to.
+type startHost struct {
+	missing bool
+	probes  [][]string
+	argv    []string
+	exit    error
+}
+
+func (h *startHost) lookPath(name string) (string, error) {
+	if h.missing {
+		return "", errors.New("executable file not found in $PATH")
+	}
+	return "/opt/homebrew/bin/" + name, nil
+}
+
+func (h *startHost) output(argv []string) ([]byte, error) {
+	h.probes = append(h.probes, argv)
+	if len(argv) > 1 && argv[1] == "--version" {
+		return []byte("nono 0.74.0\n"), nil
+	}
+	return []byte("Result: valid\n"), nil
+}
+
+func (h *startHost) attach(argv []string, _ io.Reader, _, _ io.Writer) error {
+	h.argv = argv
+	return h.exit
+}
+
+func runStart(t *testing.T, cwd string, h *startHost, args ...string) (result, error) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: "v1.2.3",
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     cwd,
+		Host:    backend.Host{LookPath: h.lookPath, Output: h.output},
+		Attach:  h.attach,
+	}
+	root := NewRootCommand(a)
+	root.SetArgs(args)
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
+}
+
+func nonoProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nbackend: nono\n")
+	return dir
+}
+
+func TestStartProvisionsTheProfileThenLaunchesTheAgent(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{}
+
+	res, err := runStart(t, dir, h, "start")
+	if err != nil {
+		t.Fatalf("start: %v\nstderr: %s", err, res.err)
+	}
+
+	profile := filepath.Join(dir, ".config", "lid", ".kit", "nono.jsonc")
+	if read(t, profile) == "" {
+		t.Fatalf("no profile written to %s", profile)
+	}
+	got := strings.Join(h.argv, " ")
+	if !strings.Contains(got, "nono run --profile "+profile) {
+		t.Errorf("launched %q, want a nono run against the profile it wrote", got)
+	}
+	if !strings.Contains(got, "-- claude") {
+		t.Errorf("launched %q, want it to run the agent", got)
+	}
+}
+
+func TestStartRefusesToProvisionWithoutNonoInstalled(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{missing: true}
+
+	res, err := runStart(t, dir, h, "start")
+	if err == nil {
+		t.Fatal("start succeeded with no nono installed")
+	}
+
+	if !strings.Contains(err.Error(), "nono") {
+		t.Errorf("error does not mention nono: %v", err)
+	}
+	if h.argv != nil {
+		t.Errorf("launched %v anyway", h.argv)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".config", "lid", ".kit", "nono.jsonc")); statErr == nil {
+		t.Error("wrote a profile for a backend that cannot run")
+	}
+	_ = res
+}
+
+func TestStartPrintNeverTouchesTheHost(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{}
+
+	res, err := runStart(t, dir, h, "start", "--print")
+	if err != nil {
+		t.Fatalf("start --print: %v\nstderr: %s", err, res.err)
+	}
+
+	if len(h.probes) != 0 {
+		t.Errorf("--print probed the host: %v", h.probes)
+	}
+	if h.argv != nil {
+		t.Errorf("--print launched %v", h.argv)
+	}
+	if !strings.Contains(res.out, "\"extends\"") {
+		t.Errorf("stdout is not a profile:\n%s", res.out)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".config", "lid", ".kit", "nono.jsonc")); statErr == nil {
+		t.Error("--print wrote a profile to disk")
+	}
+}
+
+func TestStartSaysWhereItWroteTheProfileWithoutPollutingStdout(t *testing.T) {
+	dir := nonoProject(t)
+
+	res, err := runStart(t, dir, &startHost{}, "start")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if !strings.Contains(res.err, filepath.Join(".config", "lid", ".kit", "nono.jsonc")) {
+		t.Errorf("stderr does not name the profile it wrote:\n%s", res.err)
+	}
+	if strings.Contains(res.out, "nono.jsonc") {
+		t.Errorf("the note leaked into stdout:\n%s", res.out)
+	}
+}
+
+func TestStartStaysQuietWhenTheProfileHasNotChanged(t *testing.T) {
+	dir := nonoProject(t)
+	if _, err := runStart(t, dir, &startHost{}, "start"); err != nil {
+		t.Fatalf("first start: %v", err)
+	}
+
+	h := &startHost{}
+	res, err := runStart(t, dir, h, "start")
+	if err != nil {
+		t.Fatalf("second start: %v", err)
+	}
+
+	if strings.Contains(res.err, "nono.jsonc") {
+		t.Errorf("announced a profile it did not rewrite:\n%s", res.err)
+	}
+	for _, probe := range h.probes {
+		if strings.Join(probe, " ") == "nono profile validate" {
+			t.Errorf("re-validated an unchanged profile: %v", h.probes)
+		}
+	}
+	if h.argv == nil {
+		t.Error("did not launch the agent on an unchanged profile")
+	}
+}
+
+func TestStartPassesTheAgentsExitStatusThrough(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{exit: &app.ExitError{Code: 130}}
+
+	_, err := runStart(t, dir, h, "start")
+
+	var exit *app.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("error is %v, want the agent's exit status", err)
+	}
+	if exit.Code != 130 {
+		t.Errorf("Code = %d, want 130", exit.Code)
+	}
+}
+
+func TestExitCodePassesTheAgentsStatusThroughSilently(t *testing.T) {
+	var errBuf bytes.Buffer
+	a := &app.App{Out: io.Discard, Err: &errBuf}
+
+	if got := exitCode(a, &app.ExitError{Code: 3}); got != 3 {
+		t.Errorf("exitCode = %d, want 3", got)
+	}
+	if errBuf.String() != "" {
+		t.Errorf("reported the agent's own exit as a lid error:\n%s", errBuf.String())
+	}
+}
+
+func TestExitCodeReportsARealFailure(t *testing.T) {
+	var errBuf bytes.Buffer
+	a := &app.App{Out: io.Discard, Err: &errBuf}
+
+	if got := exitCode(a, errors.New("boom")); got != 1 {
+		t.Errorf("exitCode = %d, want 1", got)
+	}
+	if !strings.Contains(errBuf.String(), "boom") {
+		t.Errorf("the failure was swallowed:\n%s", errBuf.String())
+	}
+}
+
+func TestExitCodeIsZeroWhenNothingWentWrong(t *testing.T) {
+	if got := exitCode(&app.App{Out: io.Discard, Err: io.Discard}, nil); got != 0 {
+		t.Errorf("exitCode = %d, want 0", got)
 	}
 }

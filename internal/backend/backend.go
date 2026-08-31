@@ -8,9 +8,17 @@ import (
 
 type Backend interface {
 	Name() string
-	EnsureAvailable() error
+	EnsureAvailable(h Host) error
 	Validate(cfg *config.Config) ([]string, error)
 	Render(cfg *config.Config) (string, error)
+	Provision(h Host, cfg *config.Config) (Provisioned, error)
+	StartArgv(cfg *config.Config, profilePath string) ([]string, error)
+}
+
+type Provisioned struct {
+	Path    string
+	Ref     string
+	Changed bool
 }
 
 var registry = map[string]Backend{

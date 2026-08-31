@@ -15,7 +15,7 @@ func newStartCommand(a *app.App) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Provision the sandbox for this project",
+		Short: "Start the sandboxed agent for this project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := a.Config()
@@ -43,21 +43,35 @@ func newStartCommand(a *app.App) *cobra.Command {
 				fmt.Fprintln(a.Err, ui.Err.Warn.Render(cfg.Backend+" backend: "+warning))
 			}
 
-			profile, err := b.Render(cfg)
-			if err != nil {
+			if printOnly {
+				profile, err := b.Render(cfg)
+				if err != nil {
+					return err
+				}
+				fmt.Fprint(a.Out, profile)
+				return nil
+			}
+
+			if err := b.EnsureAvailable(a.Host); err != nil {
 				return err
 			}
 
-			if !printOnly {
-				return failure.New("provisioning the %s backend is not wired up yet", cfg.Backend).
-					WithFix("run 'lid start --print' to see the profile lid would write")
+			provisioned, err := b.Provision(a.Host, cfg)
+			if err != nil {
+				return err
+			}
+			if provisioned.Changed {
+				fmt.Fprintln(a.Err, ui.Err.Info.Render("Wrote "+provisioned.Ref))
 			}
 
-			fmt.Fprint(a.Out, profile)
-			return nil
+			argv, err := b.StartArgv(cfg, provisioned.Path)
+			if err != nil {
+				return err
+			}
+			return a.Launch(argv)
 		},
 	}
 
-	cmd.Flags().BoolVar(&printOnly, "print", false, "print the generated sandbox profile instead of provisioning it")
+	cmd.Flags().BoolVar(&printOnly, "print", false, "print the generated sandbox profile instead of starting the agent")
 	return cmd
 }

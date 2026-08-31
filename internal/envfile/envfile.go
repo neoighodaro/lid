@@ -2,15 +2,17 @@ package envfile
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"strings"
+
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 func Parse(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read env file %s: %w", path, err)
+		return nil, failure.New("cannot read the env file").At(path).
+			WithFix("check the env_file entry in your config, or create the file")
 	}
 	defer f.Close()
 
@@ -24,7 +26,7 @@ func Parse(path string) (map[string]string, error) {
 		env[key] = value
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading env file %s: %w", path, err)
+		return nil, failure.New("cannot finish reading the env file: %v", err).At(path)
 	}
 	return env, nil
 }

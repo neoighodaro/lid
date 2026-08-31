@@ -2,7 +2,6 @@ package template
 
 import (
 	"embed"
-	"fmt"
 	"sort"
 	"strings"
 	"text/template"
@@ -33,7 +32,9 @@ func Render(cfg *config.Config) (string, error) {
 			WithFix("run 'lid start' instead")
 	}
 	if cfg.Template != "" {
-		return "", fmt.Errorf("template %q is yours to build: lid only generates a Dockerfile when no template is set", cfg.Template)
+		return "", failure.New("template %q is yours to build", cfg.Template).
+			At(cfg.Ref()).
+			WithFix("lid only generates a Dockerfile when no template is set")
 	}
 
 	d := data{
@@ -50,10 +51,12 @@ func Render(cfg *config.Config) (string, error) {
 		version := string(cfg.Runtimes[name])
 		r := runtime.Get(name, opts)
 		if r == nil {
-			return "", fmt.Errorf("unknown runtime %q", name)
+			return "", failure.New("unknown runtime %q", name).
+				At(cfg.Ref()).
+				WithFix("use one of %s", strings.Join(config.Runtimes, ", "))
 		}
 		if err := r.Validate(version); err != nil {
-			return "", err
+			return "", failure.At(err, cfg.Ref())
 		}
 		for _, b := range []struct {
 			block string
@@ -71,7 +74,8 @@ func Render(cfg *config.Config) (string, error) {
 
 	var out strings.Builder
 	if err := dockerfileTmpl.Execute(&out, d); err != nil {
-		return "", fmt.Errorf("render Dockerfile: %w", err)
+		return "", failure.New("cannot render the Dockerfile: %v", err).
+			WithFix("this is a bug in lid, not a problem with your config")
 	}
 	return strings.TrimRight(out.String(), "\n") + "\n", nil
 }

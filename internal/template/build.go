@@ -1,13 +1,13 @@
 package template
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 // Exec runs argv to completion, streaming its output. It is a field on Builder
@@ -28,16 +28,17 @@ func (b *Builder) Build(cfg *config.Config) error {
 
 	kitDir := cfg.KitDir()
 	if err := os.MkdirAll(kitDir, 0o755); err != nil {
-		return fmt.Errorf("create %s: %w", kitDir, err)
+		return failure.New("cannot create the build directory").At(kitDir).WithFix("%v", err)
 	}
 	path := filepath.Join(kitDir, "Dockerfile")
 	if err := os.WriteFile(path, []byte(dockerfile), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return failure.New("cannot write the Dockerfile").At(path).WithFix("%v", err)
 	}
 
 	argv := []string{"docker", "build", "--pull", "-t", cfg.SandboxImageName(), kitDir}
 	if err := b.exec()(argv, b.Stdout, b.Stderr); err != nil {
-		return fmt.Errorf("docker build failed: %w", err)
+		return failure.New("docker build failed").
+			WithFix("the build output above says why; %v", err)
 	}
 	return nil
 }

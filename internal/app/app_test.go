@@ -2,8 +2,12 @@ package app
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -105,5 +109,38 @@ func TestNewSetsCwdAndStreams(t *testing.T) {
 	}
 	if a.Version != "v1.2.3" || a.Commit != "abc123" || a.Date != "2026-08-31" {
 		t.Errorf("build info = %q/%q/%q", a.Version, a.Commit, a.Date)
+	}
+}
+
+func TestLaunchReportsTheCommandsOwnExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX shell to exit from")
+	}
+	a := &App{In: strings.NewReader(""), Out: io.Discard, Err: io.Discard}
+
+	err := a.Launch([]string{"sh", "-c", "exit 7"})
+
+	var exit *ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("Launch error is %v, want an *ExitError so lid can exit the same way", err)
+	}
+	if exit.Code != 7 {
+		t.Errorf("Code = %d, want 7", exit.Code)
+	}
+}
+
+func TestLaunchGivesTheCommandTheAppsStreams(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no POSIX shell to echo from")
+	}
+	var out bytes.Buffer
+	a := &App{In: strings.NewReader("ping\n"), Out: &out, Err: io.Discard}
+
+	if err := a.Launch([]string{"sh", "-c", "cat"}); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	if got := out.String(); got != "ping\n" {
+		t.Errorf("stdout = %q, want the piped stdin echoed back", got)
 	}
 }

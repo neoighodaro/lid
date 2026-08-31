@@ -1,6 +1,7 @@
 package failure
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -30,4 +31,14 @@ func (e *Error) At(path string) *Error {
 func (e *Error) WithFix(format string, args ...any) *Error {
 	e.Fix = strings.TrimSpace(fmt.Sprintf(format, args...))
 	return e
+}
+
+// At names the file err came from, unless it already names one. A validator can
+// then stay ignorant of which file it was handed.
+func At(err error, path string) error {
+	var f *Error
+	if errors.As(err, &f) && f.In == "" {
+		f.In = path
+	}
+	return err
 }

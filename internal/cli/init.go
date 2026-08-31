@@ -10,6 +10,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 	"github.com/neoighodaro/lid/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -50,12 +51,12 @@ func runInit(a *app.App, name string) error {
 
 	configDir := filepath.Join(a.Cwd, ".config", "lid")
 	if err := os.MkdirAll(filepath.Join(configDir, ".kit"), 0o755); err != nil {
-		return fmt.Errorf("cannot create %s: %w", configDir, err)
+		return failure.New("cannot create the config directory").At(configDir).WithFix("%v", err)
 	}
 
 	path := filepath.Join(configDir, "lid.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		return fmt.Errorf("cannot write %s: %w", path, err)
+		return failure.New("cannot write the starter config").At(path).WithFix("%v", err)
 	}
 
 	if err := ensureGitignored(a.Cwd, kitIgnoreEntry); err != nil {
@@ -77,7 +78,8 @@ func initName(cwd, flag string) (string, error) {
 
 	name := config.SanitizeName(filepath.Base(cwd))
 	if name == "" {
-		return "", fmt.Errorf("cannot derive a name from %q: pass --name", filepath.Base(cwd))
+		return "", failure.New("cannot derive a sandbox name from the directory %q", filepath.Base(cwd)).
+			WithFix("pass --name")
 	}
 	return name, nil
 }
@@ -90,7 +92,7 @@ func ensureGitignored(projectDir, entry string) error {
 	path := filepath.Join(projectDir, ".gitignore")
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("cannot read %s: %w", path, err)
+		return failure.New("cannot read .gitignore").At(path).WithFix("%v", err)
 	}
 
 	content := string(existing)
@@ -110,7 +112,7 @@ func ensureGitignored(projectDir, entry string) error {
 	b.WriteString(entry + "\n")
 
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		return fmt.Errorf("cannot update %s: %w", path, err)
+		return failure.New("cannot update .gitignore").At(path).WithFix("%v", err)
 	}
 	return nil
 }

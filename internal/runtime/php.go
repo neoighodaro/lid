@@ -3,6 +3,8 @@ package runtime
 import (
 	"fmt"
 	"strings"
+
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 var phpVersions = []string{"8.5"}
@@ -19,10 +21,12 @@ func (php) Validate(version string) error {
 	}
 	if strings.Count(version, ".") >= 2 {
 		minor := version[:strings.LastIndex(version, ".")]
-		return fmt.Errorf("php version %q is too specific: apt carries one patch per minor, so pin %q instead", version, minor)
+		return failure.New("php version %q is too specific", version).
+			WithFix("apt carries one patch per minor, so pin %q instead", minor)
 	}
 	if !contains(phpVersions, version) {
-		return fmt.Errorf("unsupported php version %q: must be one of %s", version, strings.Join(phpVersions, ", "))
+		return failure.New("unsupported php version %q", version).
+			WithFix("use one of %s", strings.Join(phpVersions, ", "))
 	}
 	return nil
 }

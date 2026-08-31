@@ -14,7 +14,5 @@ var (
 )
 
 func main() {
-	if err := cli.Execute(version, commit, date); err != nil {
-		os.Exit(1)
-	}
+	os.Exit(cli.Execute(version, commit, date))
 }
