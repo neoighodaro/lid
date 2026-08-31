@@ -263,3 +263,18 @@ func TestRuntimesRejectLatestWhereItIsNotAVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestPHPExplainsWhyAPatchVersionIsNotAllowed(t *testing.T) {
+	err := get(t, "php").Validate("8.5.3")
+	if err == nil {
+		t.Fatal("php.Validate(8.5.3) = nil, want an error")
+	}
+	for _, want := range []string{"8.5.3", "8.5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "must be one of") {
+		t.Errorf("error = %v, want it to explain the patch problem, not list minors", err)
+	}
+}

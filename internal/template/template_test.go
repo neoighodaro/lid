@@ -309,3 +309,15 @@ func TestStarterConfigSuggestsInstallableRuntimeVersions(t *testing.T) {
 		t.Fatal("no runtime suggestions found in the starter config")
 	}
 }
+
+func TestRenderSelectsTheLocaleItGenerates(t *testing.T) {
+	out := render(t, "name: lid\n")
+
+	locale := regexp.MustCompile(`locale\.gen && locale-gen`)
+	if !locale.MatchString(out) {
+		t.Fatalf("locale generation changed shape, update this test:\n%s", out)
+	}
+	if !strings.Contains(out, "ENV LANG=en_US.UTF-8") {
+		t.Errorf("locale is generated but never selected, so the sandbox runs under C:\n%s", out)
+	}
+}

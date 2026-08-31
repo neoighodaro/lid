@@ -17,6 +17,10 @@ func (php) Validate(version string) error {
 	if err := requireVersion("php", version); err != nil {
 		return err
 	}
+	if strings.Count(version, ".") >= 2 {
+		minor := version[:strings.LastIndex(version, ".")]
+		return fmt.Errorf("php version %q is too specific: apt carries one patch per minor, so pin %q instead", version, minor)
+	}
 	if !contains(phpVersions, version) {
 		return fmt.Errorf("unsupported php version %q: must be one of %s", version, strings.Join(phpVersions, ", "))
 	}
