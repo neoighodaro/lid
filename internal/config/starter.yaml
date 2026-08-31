@@ -6,6 +6,10 @@ agent: claude-code
 # Sandbox backend.
 # backend: sbx
 
+# Base image the generated Dockerfile builds on. sbx only: a nono session is a
+# host process, so setting this under 'backend: nono' is an error.
+# base_image: docker/sandbox-templates:claude-code-minimal
+
 # Copy the project to this directory inside the sandbox after creation.
 # When unset, the project stays at the mirrored host path.
 # workspace: /workspace
@@ -31,7 +35,8 @@ runtimes: {}
   # php: "8.4"
   # rust: "stable"
 
-# Extra PHP extensions, added to the defaults.
+# PHP extensions, installed on top of php-cli. Nothing is installed by
+# default - list what your project actually needs.
 # php:
 #   extensions:
 #     - sqlite3
@@ -76,10 +81,8 @@ shell:
   aliases: {}
     # g: git
 
-# Claude Code customization.
+# Claude Code customization. Ignored by other agents.
 claude:
-  # theme: ./my-theme.json
-
   plugins:
     marketplaces: []
       # - anthropics/claude-plugins-official

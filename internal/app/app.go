@@ -20,6 +20,8 @@ type App struct {
 	Cwd        string
 	ConfigPath string
 
+	Exec func(argv []string, stdout, stderr io.Writer) error
+
 	cfgOnce sync.Once
 	cfg     *config.Config
 	cfgErr  error

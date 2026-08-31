@@ -17,16 +17,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const AgentClaudeCode = "claude-code"
+
 const (
-	DefaultAgent   = "claude-code"
-	DefaultBackend = "sbx"
-	MaxNameLen     = 63
+	DefaultAgent     = AgentClaudeCode
+	DefaultBackend   = BackendSbx
+	DefaultBaseImage = "docker/sandbox-templates:claude-code-minimal"
+	MaxNameLen       = 63
 )
 
-// KnownAgents is the agent vocabulary lid accepts, sorted so the "must be one
-// of" error it produces is stable. VerifiedAgents is the subset lid actually
-// does setup work for and has been exercised against; the rest are accepted so
-// nobody is blocked from trying one, but callers should warn.
+const (
+	BackendSbx  = "sbx"
+	BackendNono = "nono"
+)
+
 var (
 	VerifiedAgents = []string{
 		"claude-code",
@@ -43,6 +47,11 @@ var (
 		"kiro",
 		"opencode",
 		"shell",
+	}
+
+	Backends = []string{
+		BackendNono,
+		BackendSbx,
 	}
 
 	Runtimes = []string{
@@ -132,6 +141,7 @@ type Config struct {
 	Name      string            `yaml:"name"`
 	Agent     string            `yaml:"agent"`
 	Backend   string            `yaml:"backend"`
+	BaseImage string            `yaml:"base_image"`
 	Template  string            `yaml:"template"`
 	Workspace string            `yaml:"workspace"`
 	Packages  []string          `yaml:"packages"`
@@ -219,6 +229,9 @@ func Parse(path string) (*Config, error) {
 	if cfg.Backend == "" {
 		cfg.Backend = DefaultBackend
 	}
+	if cfg.BaseImage == "" && cfg.BuildsImage() {
+		cfg.BaseImage = DefaultBaseImage
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -275,6 +288,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unknown agent %q: must be one of %s", c.Agent, strings.Join(KnownAgents, ", "))
 	}
 
+	if !contains(Backends, c.Backend) {
+		return fmt.Errorf("unknown backend %q: must be one of %s", c.Backend, strings.Join(Backends, ", "))
+	}
+
+	if err := c.validateBackendExclusions(); err != nil {
+		return err
+	}
+
 	if err := c.validateTemplateExclusions(); err != nil {
 		return err
 	}
@@ -322,6 +343,31 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+func (c *Config) BuildsImage() bool {
+	return c.Backend != BackendNono
+}
+
+func (c *Config) validateBackendExclusions() error {
+	if c.BuildsImage() {
+		return nil
+	}
+	for _, conflict := range []struct {
+		field string
+		set   bool
+		why   string
+	}{
+		{"base_image", c.BaseImage != "", "a nono session is a host process, not a container"},
+		{"template", c.Template != "", "a nono session is a host process, not a container"},
+		{"packages", len(c.Packages) > 0, "install them on your host yourself"},
+		{"ports", len(c.Ports) > 0, "a nono session shares the host network, so ports need no publishing"},
+	} {
+		if conflict.set {
+			return fmt.Errorf("the %s backend cannot use %s: %s", c.Backend, conflict.field, conflict.why)
+		}
+	}
 	return nil
 }
 
@@ -380,8 +426,17 @@ func validatePort(port string) error {
 
 func validPortNumber(n int) bool { return n >= 1 && n <= 65535 }
 
-// AgentVerified reports whether lid does agent-specific setup for name and has
-// been exercised against it.
+func (c Claude) IsSet() bool {
+	return c.Theme != "" ||
+		len(c.Plugins.Marketplaces) > 0 ||
+		len(c.Plugins.Install) > 0 ||
+		len(c.Settings) > 0
+}
+
+func IsClaudeAgent(name string) bool {
+	return name == AgentClaudeCode
+}
+
 func AgentVerified(name string) bool {
 	return contains(VerifiedAgents, name)
 }

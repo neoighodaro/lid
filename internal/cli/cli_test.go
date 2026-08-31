@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -367,11 +369,23 @@ func TestConfigCommandOmitsUnsetOptionalRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	for _, absent := range []string{"workspace", "template"} {
-		if strings.Contains(got.out, absent) {
-			t.Errorf("output shows %q even though it is unset:\n%s", absent, got.out)
+	for _, absent := range []string{"workspace", "template", "packages", "runtimes", "ports", "network"} {
+		if hasRow(got.out, absent) {
+			t.Errorf("output shows the %q row even though it is unset:\n%s", absent, got.out)
 		}
 	}
+}
+
+// hasRow looks for a label at the start of a line, so a value that happens to
+// contain a label name (the default base image contains "templates") cannot
+// pass for the row itself.
+func hasRow(out, label string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), label) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigCommandShowsSetOptionalRows(t *testing.T) {
@@ -428,5 +442,181 @@ func TestAgentWarningStaysOffStdout(t *testing.T) {
 	}
 	if strings.Contains(got.out, "not verified") {
 		t.Errorf("the warning leaked into stdout:\n%s", got.out)
+	}
+}
+
+type execRecorder struct {
+	calls [][]string
+	err   error
+}
+
+func (r *execRecorder) exec(argv []string, _, _ io.Writer) error {
+	r.calls = append(r.calls, argv)
+	return r.err
+}
+
+func runBuild(t *testing.T, cwd string, rec *execRecorder, args ...string) (result, error) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: "v1.2.3",
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     cwd,
+		Exec:    rec.exec,
+	}
+	root := NewRootCommand(a)
+	root.SetArgs(args)
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
+}
+
+func TestBuildPrintWritesTheDockerfileToStdout(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nruntimes:\n  node: 22\n")
+	rec := &execRecorder{}
+
+	res, err := runBuild(t, dir, rec, "build", "--print")
+	if err != nil {
+		t.Fatalf("build --print: %v\nstderr: %s", err, res.err)
+	}
+
+	if !strings.HasPrefix(res.out, "FROM ") {
+		t.Errorf("stdout is not a Dockerfile:\n%s", res.out)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("--print ran %v, want nothing", rec.calls)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".config", "lid", ".kit", "Dockerfile")); statErr == nil {
+		t.Error("--print wrote a Dockerfile into the kit dir")
+	}
+}
+
+func TestBuildRunsDockerBuild(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\n")
+	rec := &execRecorder{}
+
+	res, err := runBuild(t, dir, rec, "build")
+	if err != nil {
+		t.Fatalf("build: %v\nstderr: %s", err, res.err)
+	}
+
+	if len(rec.calls) != 1 {
+		t.Fatalf("ran %d commands, want 1: %v", len(rec.calls), rec.calls)
+	}
+	if got := strings.Join(rec.calls[0], " "); !strings.HasPrefix(got, "docker build --pull -t lid-sandbox ") {
+		t.Errorf("argv = %q, want a docker build of lid-sandbox", got)
+	}
+	if read(t, filepath.Join(dir, ".config", "lid", ".kit", "Dockerfile")) == "" {
+		t.Error("no Dockerfile was written into the kit dir")
+	}
+}
+
+func TestBuildReportsSuccessOnStdout(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\n")
+
+	res, err := runBuild(t, dir, &execRecorder{}, "build")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(res.out, "lid-sandbox") {
+		t.Errorf("stdout does not name the built image:\n%s", res.out)
+	}
+}
+
+func TestBuildFailsWhenDockerFails(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\n")
+	rec := &execRecorder{err: errors.New("exit status 1")}
+
+	if _, err := runBuild(t, dir, rec, "build"); err == nil {
+		t.Fatal("build: want error, got nil")
+	}
+}
+
+func TestBuildErrorsWithoutAConfig(t *testing.T) {
+	rec := &execRecorder{}
+
+	_, err := runBuild(t, t.TempDir(), rec, "build")
+	if err == nil {
+		t.Fatal("build: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "lid init") {
+		t.Errorf("error = %v, want it to point at lid init", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("ran %v without a config", rec.calls)
+	}
+}
+
+func TestBuildWarnsForAnUnverifiedAgent(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nagent: codex\n")
+
+	res, err := runBuild(t, dir, &execRecorder{}, "build")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(res.err, "not verified") {
+		t.Errorf("stderr does not warn about the agent:\n%s", res.err)
+	}
+}
+
+func TestBuildWarnsThatClaudeConfigIsIgnoredForOtherAgents(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nagent: codex\nclaude:\n  theme: dark\n")
+
+	res, err := runBuild(t, dir, &execRecorder{}, "build")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(res.err, "claude") {
+		t.Errorf("stderr does not warn that claude config is ignored:\n%s", res.err)
+	}
+}
+
+func TestBuildStaysQuietAboutClaudeConfigForTheClaudeAgent(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nclaude:\n  theme: dark\n")
+
+	res, err := runBuild(t, dir, &execRecorder{}, "build")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if strings.Contains(res.err, "ignoring") {
+		t.Errorf("stderr warns for the verified agent:\n%s", res.err)
+	}
+}
+
+func TestBuildRefusesABackendThatBuildsNoImage(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nbackend: nono\n")
+	rec := &execRecorder{}
+
+	_, err := runBuild(t, dir, rec, "build")
+	if err == nil {
+		t.Fatal("build: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "nono") {
+		t.Errorf("error = %v, want it to name the backend", err)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("ran %v for a backend with no image", rec.calls)
+	}
+}
+
+func TestBuildRefusesACustomTemplate(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\ntemplate: my-template\n")
+
+	_, err := runBuild(t, dir, &execRecorder{}, "build")
+	if err == nil {
+		t.Fatal("build: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "my-template") {
+		t.Errorf("error = %v, want it to name the template", err)
 	}
 }

@@ -228,11 +228,78 @@ func TestLoadDefaultsBackendToSbx(t *testing.T) {
 	}
 }
 
-func TestLoadDoesNotValidateBackendName(t *testing.T) {
-	cfg := loadBody(t, "name: lid\nbackend: something-else\n")
+func TestLoadAcceptsEveryKnownBackend(t *testing.T) {
+	for _, backend := range Backends {
+		cfg := loadBody(t, "name: lid\nbackend: "+backend+"\n")
+		if cfg.Backend != backend {
+			t.Errorf("Backend = %q, want %q", cfg.Backend, backend)
+		}
+	}
+}
 
-	if cfg.Backend != "something-else" {
-		t.Errorf("Backend = %q, want it passed through", cfg.Backend)
+func TestLoadRejectsUnknownBackend(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: sbxx\n")
+
+	if !strings.Contains(err.Error(), `unknown backend "sbxx"`) {
+		t.Errorf("error = %v, want it to name the unknown backend", err)
+	}
+	for _, backend := range Backends {
+		if !strings.Contains(err.Error(), backend) {
+			t.Errorf("error = %v, want it to list %q", err, backend)
+		}
+	}
+}
+
+func TestUnknownBackendErrorListsBackendsInStableOrder(t *testing.T) {
+	assertStableError(t, &Config{Name: "lid", Agent: DefaultAgent, Backend: "nope"})
+}
+
+func TestLoadDefaultsBaseImage(t *testing.T) {
+	cfg := loadBody(t, "name: lid\n")
+
+	if cfg.BaseImage != DefaultBaseImage {
+		t.Errorf("BaseImage = %q, want %q", cfg.BaseImage, DefaultBaseImage)
+	}
+}
+
+func TestLoadHonoursBaseImageOverride(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nbase_image: ubuntu:24.04\n")
+
+	if cfg.BaseImage != "ubuntu:24.04" {
+		t.Errorf("BaseImage = %q, want %q", cfg.BaseImage, "ubuntu:24.04")
+	}
+}
+
+func TestLoadDoesNotDefaultBaseImageForNono(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nbackend: nono\n")
+
+	if cfg.BaseImage != "" {
+		t.Errorf("BaseImage = %q, want empty: nono builds no image", cfg.BaseImage)
+	}
+}
+
+func TestNonoRejectsDockerOnlyKeys(t *testing.T) {
+	for _, tc := range []struct{ field, body string }{
+		{"base_image", "base_image: ubuntu:24.04\n"},
+		{"template", "template: my-template\n"},
+		{"packages", "packages:\n  - ripgrep\n"},
+		{"ports", "ports:\n  - 8080\n"},
+	} {
+		err := loadBodyErr(t, "name: lid\nbackend: nono\n"+tc.body)
+		if !strings.Contains(err.Error(), tc.field) {
+			t.Errorf("error for %s = %v, want it to name the field", tc.field, err)
+		}
+		if !strings.Contains(err.Error(), "nono") {
+			t.Errorf("error for %s = %v, want it to name the backend", tc.field, err)
+		}
+	}
+}
+
+func TestNonoAcceptsRuntimes(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nbackend: nono\nruntimes:\n  node: 22\n")
+
+	if cfg.Runtimes["node"] != "22" {
+		t.Errorf("Runtimes[node] = %q, want %q", cfg.Runtimes["node"], "22")
 	}
 }
 
@@ -785,6 +852,33 @@ func TestUnknownAgentErrorListsEveryKnownAgent(t *testing.T) {
 	for _, agent := range KnownAgents {
 		if !strings.Contains(err.Error(), agent) {
 			t.Errorf("error = %q, want it to list %q", err.Error(), agent)
+		}
+	}
+}
+
+func TestClaudeIsSet(t *testing.T) {
+	if (Claude{}).IsSet() {
+		t.Error("an empty claude section reports as set")
+	}
+	for name, c := range map[string]Claude{
+		"theme":        {Theme: "dark"},
+		"marketplaces": {Plugins: ClaudePlugins{Marketplaces: []string{"a/b"}}},
+		"install":      {Plugins: ClaudePlugins{Install: []string{"x@y"}}},
+		"settings":     {Settings: map[string]any{"k": "v"}},
+	} {
+		if !c.IsSet() {
+			t.Errorf("claude with %s reports as unset", name)
+		}
+	}
+}
+
+func TestIsClaudeAgent(t *testing.T) {
+	if !IsClaudeAgent(AgentClaudeCode) {
+		t.Errorf("IsClaudeAgent(%q) = false", AgentClaudeCode)
+	}
+	for _, agent := range KnownAgents {
+		if agent != AgentClaudeCode && IsClaudeAgent(agent) {
+			t.Errorf("IsClaudeAgent(%q) = true", agent)
 		}
 	}
 }

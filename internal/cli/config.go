@@ -41,6 +41,7 @@ func configRows(cfg *config.Config) [][2]string {
 	}
 
 	optional := [][2]string{
+		{"image", cfg.BaseImage},
 		{"template", cfg.Template},
 		{"workspace", cfg.Workspace},
 		{"packages", strings.Join(cfg.Packages, ", ")},

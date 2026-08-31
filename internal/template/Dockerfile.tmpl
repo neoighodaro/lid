@@ -1,0 +1,42 @@
+FROM {{ .BaseImage }}
+
+USER root
+
+# Force apt over HTTPS (443): some networks silently drop plain HTTP (80) to the
+# distro mirror, which makes apt-get update hang forever. The base image already
+# ships ca-certificates, so https to the same mirror just works. Missing source
+# files (globs that don't expand) are ignored so this stays a no-op elsewhere.
+RUN sed -i 's|http://|https://|g' \
+      /etc/apt/sources.list \
+      /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources 2>/dev/null; \
+    apt-get update \
+ && apt-get install -y --no-install-recommends locales{{ range .Packages }} {{ . }}{{ end }} \
+ && rm -rf /var/lib/apt/lists/* \
+ && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
+
+ENV TERM=xterm-256color
+{{- range .RootBlocks }}
+
+{{ . }}
+{{- end }}
+
+USER agent
+{{- if .Claude }}
+
+RUN claude update || true
+{{- range .Plugins.Marketplaces }}
+RUN claude plugin marketplace add {{ . }}
+{{- end }}
+{{- range .Plugins.Install }}
+RUN claude plugin install {{ . }}
+{{- end }}
+{{- end }}
+{{- range .AgentBlocks }}
+
+{{ . }}
+{{- end }}
+{{- range .EnvBlocks }}
+
+{{ . }}
+{{- end }}
