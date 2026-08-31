@@ -19,6 +19,7 @@ type Provisioned struct {
 	Path    string
 	Ref     string
 	Changed bool
+	Notes   []string
 }
 
 var registry = map[string]Backend{

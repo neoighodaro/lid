@@ -55,6 +55,15 @@ var (
 		BackendSbx,
 	}
 
+	NetworkProfiles = []string{
+		"claude-code",
+		"codex",
+		"developer",
+		"enterprise",
+		"minimal",
+		"opencode",
+	}
+
 	Runtimes = []string{
 		"bun",
 		"go",
@@ -139,26 +148,28 @@ type Bridge struct {
 }
 
 type Config struct {
-	Name      string            `yaml:"name"`
-	Agent     string            `yaml:"agent"`
-	Backend   string            `yaml:"backend"`
-	BaseImage string            `yaml:"base_image"`
-	Template  string            `yaml:"template"`
-	Workspace string            `yaml:"workspace"`
-	Packages  []string          `yaml:"packages"`
-	Runtimes  map[string]Scalar `yaml:"runtimes"`
-	Ports     []Scalar          `yaml:"ports"`
-	Env       map[string]Scalar `yaml:"env"`
-	EnvFile   []string          `yaml:"env_file"`
-	Network   []string          `yaml:"network"`
-	Scripts   Scripts           `yaml:"scripts"`
-	Shell     Shell             `yaml:"shell"`
-	Claude    Claude            `yaml:"claude"`
-	PHP       PHP               `yaml:"php"`
-	Zellij    Zellij            `yaml:"zellij"`
-	Memory    string            `yaml:"memory"`
-	Handoff   Handoff           `yaml:"handoff"`
-	Bridges   []Bridge          `yaml:"bridges"`
+	Name           string            `yaml:"name"`
+	Agent          string            `yaml:"agent"`
+	Backend        string            `yaml:"backend"`
+	BaseImage      string            `yaml:"base_image"`
+	Template       string            `yaml:"template"`
+	Workspace      string            `yaml:"workspace"`
+	Packages       []string          `yaml:"packages"`
+	Runtimes       map[string]Scalar `yaml:"runtimes"`
+	Ports          []Scalar          `yaml:"ports"`
+	Env            map[string]Scalar `yaml:"env"`
+	EnvFile        []string          `yaml:"env_file"`
+	Network        []string          `yaml:"network"`
+	NetworkProfile string            `yaml:"network_profile"`
+	AllowCommands  []string          `yaml:"allow_commands"`
+	Scripts        Scripts           `yaml:"scripts"`
+	Shell          Shell             `yaml:"shell"`
+	Claude         Claude            `yaml:"claude"`
+	PHP            PHP               `yaml:"php"`
+	Zellij         Zellij            `yaml:"zellij"`
+	Memory         string            `yaml:"memory"`
+	Handoff        Handoff           `yaml:"handoff"`
+	Bridges        []Bridge          `yaml:"bridges"`
 
 	Path       string `yaml:"-"`
 	ProjectDir string `yaml:"-"`
@@ -330,6 +341,11 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.NetworkProfile != "" && !contains(NetworkProfiles, c.NetworkProfile) {
+		return failure.New("unknown network profile %q", c.NetworkProfile).
+			WithFix("use one of %s", strings.Join(NetworkProfiles, ", "))
+	}
+
 	for _, domain := range c.Network {
 		if domain == "" {
 			return failure.New("a network entry is empty").WithFix("remove it, or name the host it should allow")
@@ -363,6 +379,19 @@ func (c *Config) BuildsImage() bool {
 
 func (c *Config) validateBackendExclusions() error {
 	if c.BuildsImage() {
+		for _, conflict := range []struct {
+			field string
+			set   bool
+			why   string
+		}{
+			{"allow_commands", len(c.AllowCommands) > 0, "a container image has no host command shims to lift"},
+			{"network_profile", c.NetworkProfile != "", "a container image has no nono network policy to pick"},
+		} {
+			if conflict.set {
+				return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).
+					WithFix("%s, so drop it, or switch to the %s backend", conflict.why, BackendNono)
+			}
+		}
 		return nil
 	}
 	for _, conflict := range []struct {

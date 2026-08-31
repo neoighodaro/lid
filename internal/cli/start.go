@@ -60,6 +60,9 @@ func newStartCommand(a *app.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			for _, note := range provisioned.Notes {
+				fmt.Fprintln(a.Err, ui.Err.Info.Render(note))
+			}
 			if provisioned.Changed {
 				fmt.Fprintln(a.Err, ui.Err.Info.Render("Wrote "+provisioned.Ref))
 			}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
+	"github.com/neoighodaro/lid/internal/config"
 )
 
 func write(t *testing.T, dir, rel, body string) {
@@ -630,7 +631,7 @@ func TestStartPrintRendersTheNonoProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start --print: %v\n%s", err, got.err)
 	}
-	for _, want := range []string{`"extends": "default"`, `"name": "api"`, `"network_profile": "minimal"`} {
+	for _, want := range []string{`"extends": "nolabs-ai/claude"`, `"name": "api"`, `"network_profile": "claude-code"`} {
 		if !strings.Contains(got.out, want) {
 			t.Errorf("output missing %q:\n%s", want, got.out)
 		}
@@ -882,5 +883,107 @@ func TestExitCodeReportsARealFailure(t *testing.T) {
 func TestExitCodeIsZeroWhenNothingWentWrong(t *testing.T) {
 	if got := exitCode(&app.App{Out: io.Discard, Err: io.Discard}, nil); got != 0 {
 		t.Errorf("exitCode = %d, want 0", got)
+	}
+}
+
+func TestInitWritesTheBackendItWasAskedFor(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "init", "nono"); err != nil {
+		t.Fatalf("init nono: %v", err)
+	}
+
+	cfg, err := config.Load(dir, "")
+	if err != nil {
+		t.Fatalf("the config init wrote does not load: %v", err)
+	}
+	if cfg.Backend != config.BackendNono {
+		t.Errorf("Backend = %q, want %q: the file must not lean on lid's default", cfg.Backend, config.BackendNono)
+	}
+}
+
+func TestInitDefaultsToTheDefaultBackend(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := config.Load(dir, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Backend != config.DefaultBackend {
+		t.Errorf("Backend = %q, want %q", cfg.Backend, config.DefaultBackend)
+	}
+}
+
+func TestInitRejectsABackendItDoesNotHave(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "init", "podman"); err == nil {
+		t.Fatal("init accepted a backend lid cannot run")
+	}
+	if _, err := config.Discover(dir); err == nil {
+		t.Error("init wrote a config despite the unknown backend")
+	}
+}
+
+func TestInitKeepsEachBackendsKeysOutOfTheOthersTemplate(t *testing.T) {
+	for backend, absent := range map[string][]string{
+		config.BackendNono: {"base_image:", "template:", "packages:", "ports:", "workspace:"},
+		config.BackendSbx:  {"allow_commands:", "network_profile:"},
+	} {
+		dir := t.TempDir()
+		if _, err := run(t, dir, "init", backend); err != nil {
+			t.Fatalf("init %s: %v", backend, err)
+		}
+		body := read(t, filepath.Join(dir, ".config", "lid", "lid.yaml"))
+		for _, key := range absent {
+			if strings.Contains(body, key) {
+				t.Errorf("the %s template still offers %s, which that backend cannot honour", backend, key)
+			}
+		}
+	}
+}
+
+func TestInitPinsTheRuntimesItWasGiven(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "init", "sbx", "--runtimes", "node@24,go@1.27"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := config.Load(dir, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Runtimes["node"] != "24" || cfg.Runtimes["go"] != "1.27" {
+		t.Errorf("Runtimes = %v, want node 24 and go 1.27", cfg.Runtimes)
+	}
+}
+
+func TestInitRejectsRuntimesForABackendThatInstallsNone(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := run(t, dir, "init", "nono", "--runtimes", "node@24"); err == nil {
+		t.Fatal("init pinned runtimes for nono, which uses the host's toolchains rather than installing any")
+	}
+	if _, err := config.Discover(dir); err == nil {
+		t.Error("init wrote a config despite the rejected flag")
+	}
+}
+
+func TestInitRejectsARuntimePinItCannotUse(t *testing.T) {
+	for _, pin := range []string{"node", "deno@2", "node@"} {
+		dir := t.TempDir()
+		if _, err := run(t, dir, "init", "sbx", "--runtimes", pin); err == nil {
+			t.Errorf("init accepted --runtimes %q", pin)
+		}
+	}
+}
+
+func TestInitNamesTheUnknownBackendRatherThanAFlagItRejects(t *testing.T) {
+	got, err := run(t, t.TempDir(), "init", "podman", "--runtimes", "node@24")
+	if err == nil {
+		t.Fatal("init accepted a backend lid cannot run")
+	}
+	if strings.Contains(err.Error(), "--runtimes") {
+		t.Errorf("the error blames the flag when the backend is the thing lid cannot run: %v (stderr: %s)", err, got.err)
 	}
 }

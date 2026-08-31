@@ -15,16 +15,59 @@ import (
 )
 
 const (
-	nonoBaseProfile    = "default"
-	nonoNetworkProfile = "minimal"
-	nonoMinVersion     = "0.63.0"
+	nonoBaseProfile            = "default"
+	nonoFallbackNetworkProfile = "developer"
+	nonoMinVersion             = "0.74.0"
 )
 
+// nonoAgentPacks is the registry pack whose profile lid builds on for each
+// agent. The pack is where nono maintains what the agent actually needs — its
+// credential store, its OAuth origins — so lid extends it instead of
+// reassembling it from groups. An agent with no entry extends the base profile.
+var nonoAgentPacks = map[string]string{
+	config.AgentClaudeCode: "nolabs-ai/claude",
+}
+
+// nonoAgentGroups is what lid adds on top of the agent's base. For an agent
+// with a pack this is only the platform variants the pack leaves out, so the
+// profile still resolves on a machine other than the one that generated it.
 var nonoAgentGroups = map[string][]string{
-	config.AgentClaudeCode: {"claude_code_macos", "claude_code_linux"},
+	config.AgentClaudeCode: {"claude_code_linux"},
 	"codex":                {"codex_macos"},
 	"opencode":             {"opencode_linux"},
 	"shell":                {},
+}
+
+var nonoCommandDenies = map[string][]string{
+	"dangerous_commands": {
+		"rm", "rmdir", "dd", "chmod", "chown", "chgrp", "mv", "cp", "truncate",
+		"scp", "rsync", "sftp", "ftp", "xargs", "sudo", "su", "doas", "pip",
+		"npm", "kill", "killall", "pkill", "shutdown", "reboot", "halt",
+		"poweroff",
+	},
+	"dangerous_commands_macos": {"srm", "brew", "launchctl"},
+	"dangerous_commands_linux": {
+		"shred", "mkfs", "mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "mkswap",
+		"fdisk", "parted", "gdisk", "wipefs", "chattr", "init", "systemctl",
+		"apt", "apt-get", "dpkg", "yum", "dnf", "pacman", "pkexec",
+	},
+}
+
+var nonoCommandGroups = func() map[string]string {
+	groups := make(map[string]string)
+	for group, commands := range nonoCommandDenies {
+		for _, command := range commands {
+			groups[command] = group
+		}
+	}
+	return groups
+}()
+
+var nonoAgentNetworkProfiles = map[string]string{
+	config.AgentClaudeCode: "claude-code",
+	"codex":                "codex",
+	"opencode":             "opencode",
+	"shell":                nonoFallbackNetworkProfile,
 }
 
 var nonoAgentCommands = map[string][]string{
@@ -32,6 +75,25 @@ var nonoAgentCommands = map[string][]string{
 	"codex":                {"codex"},
 	"opencode":             {"opencode"},
 	"shell":                nil,
+}
+
+var nonoRuntimeWrites = map[string][]string{
+	"bun":    {"$HOME/.bun/install/cache"},
+	"go":     {"$HOME/go/pkg"},
+	"node":   {"$HOME/.npm"},
+	"pnpm":   {"$HOME/Library/pnpm/store", "$HOME/.local/share/pnpm/store"},
+	"python": {"$HOME/.local/share/uv"},
+	"rust":   {"$HOME/.cargo"},
+}
+
+var nonoRuntimeDenies = map[string][]string{
+	"rust": {"$HOME/.cargo/bin"},
+}
+
+var nonoRuntimeManagers = map[string]string{
+	"node":   "npm",
+	"php":    "brew",
+	"python": "pip",
 }
 
 var nonoRuntimeGroups = map[string][]string{
@@ -46,11 +108,13 @@ var nonoRuntimeGroups = map[string][]string{
 
 type nonoProfile struct {
 	Extends     string           `json:"extends"`
+	Packs       []string         `json:"packs,omitempty"`
 	Meta        nonoMeta         `json:"meta"`
 	Groups      nonoGroups       `json:"groups"`
 	Workdir     nonoWorkdir      `json:"workdir"`
 	Interactive bool             `json:"interactive"`
 	Network     nonoNetwork      `json:"network"`
+	Filesystem  *nonoFilesystem  `json:"filesystem,omitempty"`
 	Environment *nonoEnvironment `json:"environment,omitempty"`
 }
 
@@ -61,10 +125,16 @@ type nonoMeta struct {
 
 type nonoGroups struct {
 	Include []string `json:"include"`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 type nonoWorkdir struct {
 	Access string `json:"access"`
+}
+
+type nonoFilesystem struct {
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
 }
 
 type nonoNetwork struct {
@@ -102,9 +172,22 @@ func (n nono) Provision(h Host, cfg *config.Config) (Provisioned, error) {
 		return Provisioned{}, err
 	}
 
+	// The pack is checked before the profile is compared: a checkout carried to
+	// a new machine has an up-to-date profile and no pack at all.
+	var notes []string
+	if pack := nonoAgentPacks[cfg.Agent]; pack != "" {
+		pulled, err := ensureNonoPack(h, pack)
+		if err != nil {
+			return Provisioned{}, err
+		}
+		if pulled {
+			notes = append(notes, "Installed "+pack)
+		}
+	}
+
 	path, ref := nonoProfilePath(cfg), nonoProfileRef(cfg)
 	if existing, err := os.ReadFile(path); err == nil && string(existing) == profile {
-		return Provisioned{Path: path, Ref: ref}, nil
+		return Provisioned{Path: path, Ref: ref, Notes: notes}, nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -123,7 +206,21 @@ func (n nono) Provision(h Host, cfg *config.Config) (Provisioned, error) {
 			At(ref).
 			WithFix("this is a bug in lid; run 'nono profile validate %s' for the full report", ref)
 	}
-	return Provisioned{Path: path, Ref: ref, Changed: true}, nil
+	return Provisioned{Path: path, Ref: ref, Changed: true, Notes: append(notes, nonoDeniedManagerNotes(cfg)...)}, nil
+}
+
+// ensureNonoPack installs the pack unless the host already has it, and reports
+// whether it had to. lid pulls it rather than telling the user to, so a fresh
+// clone on a fresh machine needs nothing but 'lid start'.
+func ensureNonoPack(h Host, pack string) (bool, error) {
+	if out, err := h.output([]string{"nono", "list", "--installed"}); err == nil && strings.Contains(out, pack) {
+		return false, nil
+	}
+	if out, err := h.output([]string{"nono", "pull", pack}); err != nil {
+		return false, failure.New("cannot install the %s pack the sandbox profile needs: %s", pack, firstLine(out)).
+			WithFix("check that you can reach the nono registry, then run 'nono pull %s' yourself", pack)
+	}
+	return true, nil
 }
 
 // StartArgv is the command that hands the terminal to the sandboxed agent.
@@ -172,7 +269,15 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 			WithFix("use one of %s", strings.Join(nonoAgentNames(), ", "))
 	}
 
-	var warnings []string
+	for _, name := range cfg.AllowCommands {
+		if _, ok := nonoCommandGroups[name]; !ok {
+			return nil, failure.New("nono does not deny %q, so allow_commands cannot unblock it", name).
+				At(cfg.Ref()).
+				WithFix("drop it; allow_commands only lifts nono's own denials, like npm, pip, brew or rm")
+		}
+	}
+
+	warnings := nonoUnblockWarnings(cfg)
 	for _, group := range []struct {
 		why    string
 		fields []nonoField
@@ -195,6 +300,60 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 		}
 	}
 	return warnings, nil
+}
+
+func nonoCommandExcludes(cfg *config.Config) []string {
+	var groups []string
+	seen := make(map[string]bool)
+	for _, name := range cfg.AllowCommands {
+		group := nonoCommandGroups[name]
+		if group != "" && !seen[group] {
+			seen[group] = true
+			groups = append(groups, group)
+		}
+	}
+	sort.Strings(groups)
+	return groups
+}
+
+func nonoUnblockWarnings(cfg *config.Config) []string {
+	asked := make(map[string]bool, len(cfg.AllowCommands))
+	for _, name := range cfg.AllowCommands {
+		asked[name] = true
+	}
+
+	var warnings []string
+	for _, group := range nonoCommandExcludes(cfg) {
+		commands := nonoCommandDenies[group]
+		var wanted, extra []string
+		for _, command := range commands {
+			if asked[command] {
+				wanted = append(wanted, command)
+			} else if len(extra) < 3 {
+				extra = append(extra, command)
+			}
+		}
+		warnings = append(warnings, fmt.Sprintf("allowing %s unblocks all %d commands in nono's %s group, including %s",
+			strings.Join(wanted, ", "), len(commands), group, strings.Join(extra, ", ")))
+	}
+	return warnings
+}
+
+func nonoDeniedManagerNotes(cfg *config.Config) []string {
+	allowed := make(map[string]bool, len(cfg.AllowCommands))
+	for _, name := range cfg.AllowCommands {
+		allowed[name] = true
+	}
+
+	var notes []string
+	for _, runtime := range config.Runtimes {
+		manager := nonoRuntimeManagers[runtime]
+		if _, declared := cfg.Runtimes[runtime]; !declared || manager == "" || allowed[manager] {
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("%s is denied in the sandbox; set 'allow_commands: [%s]' if this project installs %s dependencies", manager, manager, runtime))
+	}
+	return notes
 }
 
 // nonoField is a config key and whether the user set it.
@@ -225,20 +384,28 @@ func (n nono) Render(cfg *config.Config) (string, error) {
 		return "", err
 	}
 
+	base, pack := nonoBaseProfile, nonoAgentPacks[cfg.Agent]
+	var packs []string
+	if pack != "" {
+		base, packs = pack, []string{pack}
+	}
+
 	profile := nonoProfile{
-		Extends: nonoBaseProfile,
+		Extends: base,
+		Packs:   packs,
 		Meta: nonoMeta{
 			Name:        cfg.Name,
 			Description: fmt.Sprintf("Generated by lid from %s. Do not edit.", cfg.Ref()),
 		},
-		Groups:      nonoGroups{Include: nonoGroupsFor(cfg)},
+		Groups:      nonoGroups{Include: nonoGroupsFor(cfg), Exclude: nonoCommandExcludes(cfg)},
 		Workdir:     nonoWorkdir{Access: "readwrite"},
 		Interactive: true,
 		Network: nonoNetwork{
-			NetworkProfile: nonoNetworkProfile,
+			NetworkProfile: nonoNetworkProfileFor(cfg),
 			AllowDomain:    cfg.Network,
 		},
 	}
+	profile.Filesystem = nonoFilesystemFor(cfg)
 	if len(env) > 0 {
 		profile.Environment = &nonoEnvironment{SetVars: env}
 	}
@@ -255,6 +422,16 @@ func (n nono) Render(cfg *config.Config) (string, error) {
 
 // nonoGroupsFor lists the agent's groups then each declared runtime's, walking
 // config.Runtimes rather than the config's map so the order never shifts.
+func nonoNetworkProfileFor(cfg *config.Config) string {
+	if cfg.NetworkProfile != "" {
+		return cfg.NetworkProfile
+	}
+	if profile := nonoAgentNetworkProfiles[cfg.Agent]; profile != "" {
+		return profile
+	}
+	return nonoFallbackNetworkProfile
+}
+
 func nonoGroupsFor(cfg *config.Config) []string {
 	groups := make([]string, 0, 8)
 	seen := make(map[string]bool)
@@ -274,6 +451,21 @@ func nonoGroupsFor(cfg *config.Config) []string {
 		}
 	}
 	return groups
+}
+
+func nonoFilesystemFor(cfg *config.Config) *nonoFilesystem {
+	var fs nonoFilesystem
+	for _, name := range config.Runtimes {
+		if _, ok := cfg.Runtimes[name]; !ok {
+			continue
+		}
+		fs.Allow = append(fs.Allow, nonoRuntimeWrites[name]...)
+		fs.Deny = append(fs.Deny, nonoRuntimeDenies[name]...)
+	}
+	if len(fs.Allow) == 0 && len(fs.Deny) == 0 {
+		return nil
+	}
+	return &fs
 }
 
 func nonoAgentNames() []string {

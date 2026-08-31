@@ -2,12 +2,9 @@
 
 name: {{ .Name }}
 agent: claude-code
+backend: sbx
 
-# Sandbox backend.
-# backend: sbx
-
-# Base image the generated Dockerfile builds on. sbx only: a nono session is a
-# host process, so setting this under 'backend: nono' is an error.
+# Base image the generated Dockerfile builds on.
 # base_image: docker/sandbox-templates:claude-code-minimal
 
 # Copy the project to this directory inside the sandbox after creation.
@@ -26,6 +23,12 @@ packages: []
   # - xz-utils
 
 # Language runtimes.
+{{- if .Runtimes }}
+runtimes:
+{{- range .Runtimes }}
+  {{ .Name }}: "{{ .Version }}"
+{{- end }}
+{{- else }}
 runtimes: {}
   # node: "24"
   # pnpm: "11"
@@ -34,6 +37,7 @@ runtimes: {}
   # go: "1.27"
   # php: "8.5"
   # rust: "1.98.0"
+{{- end }}
 
 # PHP extensions, installed on top of php-cli. Nothing is installed by
 # default - list what your project actually needs.

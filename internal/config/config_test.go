@@ -785,7 +785,7 @@ func TestSanitizeNameProducesValidNames(t *testing.T) {
 }
 
 func TestStarterConfigParsesAndValidates(t *testing.T) {
-	body, err := Starter("my-project")
+	body, err := Starter(StarterOptions{Name: "my-project"})
 	if err != nil {
 		t.Fatalf("Starter: %v", err)
 	}
@@ -807,7 +807,7 @@ func TestStarterConfigParsesAndValidates(t *testing.T) {
 
 func TestStarterRejectsInvalidNames(t *testing.T) {
 	for _, name := range []string{"", "Not Valid", "-nope"} {
-		if _, err := Starter(name); err == nil {
+		if _, err := Starter(StarterOptions{Name: name}); err == nil {
 			t.Errorf("Starter(%q): want error, got nil", name)
 		}
 	}
@@ -1027,5 +1027,114 @@ func TestResolvedEnvNamesTheEnvFileEntryAsWritten(t *testing.T) {
 	}
 	if f.In != ".env.missing" {
 		t.Errorf("In = %q, want the env_file entry as written in the config", f.In)
+	}
+}
+
+func TestStarterConfigParsesAndValidatesForEveryBackend(t *testing.T) {
+	for _, backend := range Backends {
+		body, err := Starter(StarterOptions{Name: "probe", Backend: backend})
+		if err != nil {
+			t.Fatalf("Starter(%s): %v", backend, err)
+		}
+
+		dir := t.TempDir()
+		write(t, dir, "lid.yaml", body)
+
+		cfg, err := Load(dir, "")
+		if err != nil {
+			t.Fatalf("the %s starter config does not load: %v\n%s", backend, err, body)
+		}
+		if cfg.Backend != backend {
+			t.Errorf("the %s template wrote backend %q", backend, cfg.Backend)
+		}
+	}
+}
+
+// The templates duplicate the keys both backends honour, so nothing stops a new
+// key landing in one and being forgotten in the other. This is that stop.
+func TestStarterTemplatesOfferTheKeysBothBackendsHonour(t *testing.T) {
+	shared := []string{"name:", "agent:", "backend:", "runtimes:", "network:", "env:", "env_file:"}
+
+	for _, backend := range Backends {
+		body, err := Starter(StarterOptions{Name: "probe", Backend: backend})
+		if err != nil {
+			t.Fatalf("Starter(%s): %v", backend, err)
+		}
+		for _, key := range shared {
+			if !strings.Contains(body, key) {
+				t.Errorf("the %s template does not offer %s, which that backend honours", backend, key)
+			}
+		}
+	}
+}
+
+func TestStarterPinsRuntimesInTheOrderRuntimesLists(t *testing.T) {
+	pins, err := ParseRuntimePins([]string{"rust@1.98.0", "node@24", "go@1.27"})
+	if err != nil {
+		t.Fatalf("ParseRuntimePins: %v", err)
+	}
+
+	body, err := Starter(StarterOptions{Name: "probe", Backend: BackendSbx, Runtimes: pins})
+	if err != nil {
+		t.Fatalf("Starter: %v", err)
+	}
+
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", body)
+	cfg, err := Load(dir, "")
+	if err != nil {
+		t.Fatalf("a pinned starter config does not load: %v\n%s", err, body)
+	}
+	if len(cfg.Runtimes) != 3 || cfg.Runtimes["rust"] != "1.98.0" {
+		t.Errorf("Runtimes = %v", cfg.Runtimes)
+	}
+	if got := strings.Index(body, "go:"); got > strings.Index(body, "node:") {
+		t.Errorf("pins are not in Runtimes order:\n%s", body)
+	}
+}
+
+func TestStarterRejectsABackendLidDoesNotHave(t *testing.T) {
+	if _, err := Starter(StarterOptions{Name: "probe", Backend: "podman"}); err == nil {
+		t.Error("Starter rendered a config for a backend lid cannot run")
+	}
+}
+
+func TestSbxRejectsAllowCommandsItCannotLift(t *testing.T) {
+	cfg := &Config{Name: "api", Agent: DefaultAgent, Backend: BackendSbx, AllowCommands: []string{"npm"}}
+
+	if err := cfg.Validate(); err == nil {
+		t.Error("allow_commands was accepted under sbx, where it silently does nothing")
+	}
+}
+
+func TestNonoRejectsANetworkProfileNonoDoesNotHave(t *testing.T) {
+	cfg := &Config{Name: "api", Agent: DefaultAgent, Backend: BackendNono, NetworkProfile: "wide-open"}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("network_profile 'wide-open' was accepted, and nono would fail on it later")
+	}
+	if !strings.Contains(err.Error(), "minimal") {
+		t.Errorf("error = %q, want it to name the profiles that exist", err.Error())
+	}
+}
+
+func TestSbxRejectsANetworkProfileItCannotApply(t *testing.T) {
+	cfg := &Config{Name: "api", Agent: DefaultAgent, Backend: BackendSbx, NetworkProfile: "minimal"}
+
+	if err := cfg.Validate(); err == nil {
+		t.Error("network_profile was accepted under sbx, where it silently does nothing")
+	}
+}
+
+func TestStarterNonoTemplateOffersTheKeysOnlyNonoHonours(t *testing.T) {
+	body, err := Starter(StarterOptions{Name: "probe", Backend: BackendNono})
+	if err != nil {
+		t.Fatalf("Starter: %v", err)
+	}
+	for _, key := range []string{"allow_commands:", "network_profile:"} {
+		if !strings.Contains(body, key) {
+			t.Errorf("the nono template does not offer %s, which only that backend honours", key)
+		}
 	}
 }

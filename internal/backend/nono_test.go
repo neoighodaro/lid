@@ -90,11 +90,23 @@ func TestNonoProfileCarriesAGeneratedHeaderNamingTheSourceConfig(t *testing.T) {
 	}
 }
 
-func TestNonoProfileExtendsOnlyABuiltInProfile(t *testing.T) {
-	profile := profileOf(t, "name: api\nbackend: nono\n")
+func TestNonoProfileDeclaresAnyBaseThatIsNotBuiltIn(t *testing.T) {
+	for _, agent := range []string{"claude-code", "codex", "opencode", "shell"} {
+		profile := profileOf(t, "name: api\nbackend: nono\nagent: "+agent+"\n")
 
-	if got := profile["extends"]; got != "default" {
-		t.Errorf("extends = %v, want \"default\": pack profiles need 'nono pull' first, so a generated profile cannot rely on one", got)
+		base, _ := profile["extends"].(string)
+		if base == nonoBaseProfile {
+			continue
+		}
+		var packs []string
+		entries, _ := profile["packs"].([]any)
+		for _, entry := range entries {
+			name, _ := entry.(string)
+			packs = append(packs, name)
+		}
+		if !hasGroup(packs, base) {
+			t.Errorf("agent %s extends %q without declaring it in packs, so nono cannot say what is missing when it is not installed", agent, base)
+		}
 	}
 }
 
@@ -130,13 +142,11 @@ func TestNonoProfileIsInteractive(t *testing.T) {
 	}
 }
 
-func TestNonoProfileIncludesEveryPlatformVariantOfAGroup(t *testing.T) {
+func TestNonoProfileCoversThePlatformsTheAgentPackLeavesOut(t *testing.T) {
 	groups := groupsOf(t, "name: api\nbackend: nono\nagent: claude-code\n")
 
-	for _, want := range []string{"claude_code_macos", "claude_code_linux"} {
-		if !hasGroup(groups, want) {
-			t.Errorf("groups missing %q: the profile must resolve on any host, not just the one that generated it\ngot %v", want, groups)
-		}
+	if !hasGroup(groups, "claude_code_linux") {
+		t.Errorf("groups missing %q: the pack carries only the macOS variant, so a teammate on Linux would lose the agent's paths\ngot %v", "claude_code_linux", groups)
 	}
 }
 
@@ -181,8 +191,8 @@ func TestNonoProfileRestrictsTheNetworkToTheConfiguredDomains(t *testing.T) {
 	if !ok {
 		t.Fatalf("profile has no network object: %v", profile)
 	}
-	if network["network_profile"] != "minimal" {
-		t.Errorf("network_profile = %v, want minimal: without it nono leaves the network wide open and 'network:' would constrain nothing", network["network_profile"])
+	if network["network_profile"] != "claude-code" {
+		t.Errorf("network_profile = %v, want claude-code: without a profile nono leaves the network wide open and 'network:' would constrain nothing", network["network_profile"])
 	}
 	domains, ok := network["allow_domain"].([]any)
 	if !ok || len(domains) != 1 || domains[0] != "registry.npmjs.org" {
@@ -321,17 +331,17 @@ func TestNonoVersionFloorMatchesTheNewestKeyTheProfileUses(t *testing.T) {
 		ok     bool
 	}{
 		{"nono 0.74.0", true},
-		{"nono 0.63.0", true},
-		{"nono 0.62.9", false},
+		{"nono 0.73.9", false},
+		{"nono 0.63.0", false},
 		{"nono 1.0.0", true},
-		{"nono 0.63.0-rc.1", true},
+		{"nono 0.74.0-rc.1", true},
 	} {
 		err := checkNonoVersion(tc.output)
 		if tc.ok && err != nil {
 			t.Errorf("%q rejected: %v", tc.output, err)
 		}
 		if !tc.ok && err == nil {
-			t.Errorf("%q accepted, but environment.set_vars only exists from 0.63.0", tc.output)
+			t.Errorf("%q accepted, but the pack keys the profile uses are only verified from 0.74.0", tc.output)
 		}
 	}
 }
@@ -389,5 +399,184 @@ func TestNonoSeparatesWhatItCannotHonourFromWhatIsNotWiredUp(t *testing.T) {
 	}
 	if len(warnings) != 2 {
 		t.Fatalf("warnings = %v, want the host-nature key and the unwired one kept apart", warnings)
+	}
+}
+
+// excludesOf reads the groups the profile subtracts, which is empty when the
+// config allows no command nono denies by default.
+func excludesOf(t *testing.T, body string) []string {
+	t.Helper()
+	profile := profileOf(t, body)
+
+	groups, ok := profile["groups"].(map[string]any)
+	if !ok {
+		t.Fatalf("profile has no groups object: %v", profile)
+	}
+	exclude, _ := groups["exclude"].([]any)
+	names := make([]string, 0, len(exclude))
+	for _, g := range exclude {
+		name, _ := g.(string)
+		names = append(names, name)
+	}
+	return names
+}
+
+func TestNonoAllowCommandsExcludesTheGroupThatDeniesTheCommand(t *testing.T) {
+	excludes := excludesOf(t, "name: api\nbackend: nono\nallow_commands:\n  - npm\n")
+
+	if !hasGroup(excludes, "dangerous_commands") {
+		t.Errorf("allowing npm did not exclude the group that denies it, so npm stays shimmed off PATH: %v", excludes)
+	}
+}
+
+func TestNonoAllowCommandsExcludesEveryGroupTheCommandsSpanOnce(t *testing.T) {
+	excludes := excludesOf(t, "name: api\nbackend: nono\nallow_commands:\n  - npm\n  - pip\n  - brew\n  - apt\n")
+
+	want := []string{"dangerous_commands", "dangerous_commands_linux", "dangerous_commands_macos"}
+	if len(excludes) != len(want) {
+		t.Fatalf("got %v, want exactly %v: npm and pip share a group, so it must appear once", excludes, want)
+	}
+	for i, name := range want {
+		if excludes[i] != name {
+			t.Errorf("exclude[%d] is %q, want %q: the order must not shift between runs", i, excludes[i], name)
+		}
+	}
+}
+
+func TestNonoOmitsExcludeWhenTheConfigAllowsNoCommand(t *testing.T) {
+	if excludes := excludesOf(t, "name: api\nbackend: nono\n"); len(excludes) != 0 {
+		t.Errorf("a config that allows nothing still subtracts groups: %v", excludes)
+	}
+}
+
+func TestNonoRejectsACommandItDoesNotDenyInTheFirstPlace(t *testing.T) {
+	_, err := Get(config.BackendNono).Render(cfgFor(t, "name: api\nbackend: nono\nallow_commands:\n  - ls\n"))
+	if err == nil {
+		t.Fatal("lid accepted 'allow_commands: [ls]', which unblocks nothing and hides the typo")
+	}
+	if !strings.Contains(err.Error(), "ls") {
+		t.Errorf("the error does not name the command that is wrong: %v", err)
+	}
+}
+
+func TestNonoWarnsThatAllowingOneCommandUnblocksItsWholeGroup(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nallow_commands:\n  - npm\n"))
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "npm") || !strings.Contains(joined, "rm") {
+		t.Errorf("nothing warns that allowing npm also unblocks rm, which nono denies in the same group: %v", warnings)
+	}
+}
+
+// filesystemOf reads the profile's filesystem section as lists per key, which
+// is absent when no declared runtime needs to write outside the project.
+func filesystemOf(t *testing.T, body string) map[string][]string {
+	t.Helper()
+	profile := profileOf(t, body)
+
+	section, ok := profile["filesystem"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string][]string, len(section))
+	for key, raw := range section {
+		entries, _ := raw.([]any)
+		for _, entry := range entries {
+			path, _ := entry.(string)
+			out[key] = append(out[key], path)
+		}
+	}
+	return out
+}
+
+func TestNonoGrantsWriteOnThePackageCacheOfADeclaredRuntime(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n")
+
+	if !hasGroup(fs["allow"], "$HOME/.npm") {
+		t.Errorf("node is declared but its npm cache is read-only, so 'npm install' cannot write _cacache: %v", fs)
+	}
+}
+
+func TestNonoGrantsNothingForARuntimeTheConfigDoesNotDeclare(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  go: \"1.27\"\n")
+
+	if !hasGroup(fs["allow"], "$HOME/go/pkg") {
+		t.Errorf("go is declared but its module cache is read-only, so 'go build' cannot populate it: %v", fs)
+	}
+	if hasGroup(fs["allow"], "$HOME/.npm") {
+		t.Errorf("a go-only project was granted the node cache: %v", fs)
+	}
+}
+
+func TestNonoOmitsFilesystemWhenNoDeclaredRuntimeNeedsToWrite(t *testing.T) {
+	if fs := filesystemOf(t, "name: api\nbackend: nono\n"); fs != nil {
+		t.Errorf("a config with no runtimes still carries a filesystem section: %v", fs)
+	}
+	if fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  php: \"8.4\"\n"); fs != nil {
+		t.Errorf("php writes through homebrew, which lid does not grant, yet a section was written: %v", fs)
+	}
+}
+
+func TestNonoKeepsExecutableDirectoriesOutOfTheRuntimeWriteGrant(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  rust: \"1.90\"\n")
+
+	if !hasGroup(fs["allow"], "$HOME/.cargo") {
+		t.Fatalf("cargo cannot take its .package-cache lock without write on CARGO_HOME: %v", fs)
+	}
+	if !hasGroup(fs["deny"], "$HOME/.cargo/bin") {
+		t.Errorf("granting CARGO_HOME left ~/.cargo/bin writable, so the sandbox can plant a binary the host runs: %v", fs)
+	}
+	for _, path := range fs["allow"] {
+		if strings.HasSuffix(path, "/bin") {
+			t.Errorf("granted %q, which is on the host PATH", path)
+		}
+	}
+}
+
+func TestNonoRuntimeGrantsKeepAFixedOrder(t *testing.T) {
+	body := "name: api\nbackend: nono\nruntimes:\n  rust: \"1.90\"\n  node: \"24\"\n  go: \"1.27\"\n"
+
+	first := filesystemOf(t, body)["allow"]
+	for i := 0; i < 5; i++ {
+		if got := filesystemOf(t, body)["allow"]; strings.Join(got, ",") != strings.Join(first, ",") {
+			t.Fatalf("the grant order shifted between renders: %v then %v", first, got)
+		}
+	}
+	if strings.Join(first, ",") != "$HOME/go/pkg,$HOME/.npm,$HOME/.cargo" {
+		t.Errorf("grants are not in config.Runtimes order: %v", first)
+	}
+}
+
+func TestNonoNetworkProfileDefaultsToNonosProfileForTheAgent(t *testing.T) {
+	for body, want := range map[string]string{
+		"name: api\nbackend: nono\n":               "claude-code",
+		"name: api\nbackend: nono\nagent: codex\n": "codex",
+		"name: api\nbackend: nono\nagent: shell\n": "developer",
+	} {
+		network := profileOf(t, body)["network"].(map[string]any)
+		if network["network_profile"] != want {
+			t.Errorf("network_profile = %v, want %s\n%s", network["network_profile"], want, body)
+		}
+	}
+}
+
+func TestNonoNetworkProfileCanBeChosen(t *testing.T) {
+	network := profileOf(t, "name: api\nbackend: nono\nnetwork_profile: minimal\n")["network"].(map[string]any)
+
+	if network["network_profile"] != "minimal" {
+		t.Errorf("network_profile = %v, want the configured minimal", network["network_profile"])
+	}
+}
+
+// nono's own default is "block": false, so an unprofiled network is an open one.
+func TestNonoNeverLeavesTheNetworkUnprofiled(t *testing.T) {
+	for _, agent := range nonoAgentNames() {
+		network := profileOf(t, "name: api\nbackend: nono\nagent: "+agent+"\n")["network"].(map[string]any)
+		if profile, _ := network["network_profile"].(string); profile == "" {
+			t.Errorf("agent %s renders no network_profile, which leaves nono blocking nothing", agent)
+		}
 	}
 }

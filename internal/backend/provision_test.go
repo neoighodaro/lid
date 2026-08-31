@@ -13,10 +13,11 @@ import (
 // fakeHost stands in for a machine with nono installed, recording what lid
 // would run so the tests never need the real binary.
 type fakeHost struct {
-	missing bool
-	version string
-	reject  string
-	calls   [][]string
+	missing   bool
+	version   string
+	reject    string
+	installed []string
+	calls     [][]string
 }
 
 func (f *fakeHost) host() Host {
@@ -35,6 +36,9 @@ func (f *fakeHost) host() Host {
 					version = "nono 0.74.0"
 				}
 				return []byte(version + "\n"), nil
+			}
+			if len(argv) > 1 && argv[1] == "list" {
+				return []byte(strings.Join(f.installed, "\n") + "\n"), nil
 			}
 			if f.reject != "" {
 				return []byte(f.reject), errors.New("exit status 2")
@@ -123,11 +127,8 @@ func TestProvisionHasNonoValidateTheProfileItWrote(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	if len(h.calls) != 1 {
-		t.Fatalf("ran %d commands, want 1 validate: %v", len(h.calls), h.calls)
-	}
-	if want := strings.Join([]string{"nono", "profile", "validate", got.Path}, " "); strings.Join(h.calls[0], " ") != want {
-		t.Errorf("argv = %q, want %q", strings.Join(h.calls[0], " "), want)
+	if !h.ran("nono", "profile", "validate", got.Path) {
+		t.Errorf("nothing validated the profile lid wrote: %v", h.calls)
 	}
 }
 
@@ -148,7 +149,7 @@ func TestProvisionLeavesAnUnchangedProfileAlone(t *testing.T) {
 	if got.Changed {
 		t.Error("Changed = true when the config had not moved")
 	}
-	if len(again.calls) != 0 {
+	if again.ran("nono", "profile", "validate") {
 		t.Errorf("re-validated an unchanged profile: %v", again.calls)
 	}
 }
@@ -276,5 +277,179 @@ func TestStartArgvGrantsTheProjectDirectoryWithoutPrompting(t *testing.T) {
 		if !contains(argv, "--allow-cwd") {
 			t.Errorf("argv %q has no --allow-cwd, so nono asks to share the project on every start", strings.Join(argv, " "))
 		}
+	}
+}
+
+// ran reports whether the host was asked to run a command containing every
+// fragment, so a test names the call it cares about rather than an index.
+func (f *fakeHost) ran(fragments ...string) bool {
+	for _, call := range f.calls {
+		joined := strings.Join(call, " ")
+		found := true
+		for _, fragment := range fragments {
+			if !strings.Contains(joined, fragment) {
+				found = false
+				break
+			}
+		}
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRenderExtendsTheAgentsPackProfile(t *testing.T) {
+	profile, err := Get("nono").Render(cfgFor(t, "name: api\nbackend: nono\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(profile, `"extends": "nolabs-ai/claude"`) {
+		t.Errorf("profile does not extend the agent's pack:\n%s", profile)
+	}
+	if strings.Contains(profile, "claude_code_macos") {
+		t.Errorf("profile still hand-picks the groups the pack owns:\n%s", profile)
+	}
+	if !strings.Contains(profile, "nolabs-ai/claude") || !strings.Contains(profile, `"packs"`) {
+		t.Errorf("profile does not declare the pack it depends on:\n%s", profile)
+	}
+}
+
+func TestRenderExtendsDefaultForAnAgentWithNoPack(t *testing.T) {
+	profile, err := Get("nono").Render(cfgFor(t, "name: api\nbackend: nono\nagent: shell\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(profile, `"extends": "default"`) {
+		t.Errorf("an agent with no pack lost its base profile:\n%s", profile)
+	}
+	if strings.Contains(profile, `"packs"`) {
+		t.Errorf("profile declares a pack dependency it does not have:\n%s", profile)
+	}
+}
+
+func TestRenderKeepsRuntimeGroupsThePackDoesNotCarry(t *testing.T) {
+	profile, err := Get("nono").Render(cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  go: \"1.25\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(profile, "go_runtime") {
+		t.Errorf("declared runtime lost its group:\n%s", profile)
+	}
+}
+
+func TestProvisionInstallsTheAgentsPackOnAMachineWithoutIt(t *testing.T) {
+	h := &fakeHost{}
+	cfg := cfgFor(t, "name: api\nbackend: nono\n")
+
+	got, err := Get("nono").Provision(h.host(), cfg)
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !h.ran("nono", "pull", "nolabs-ai/claude") {
+		t.Errorf("nothing pulled the pack the profile extends: %v", h.calls)
+	}
+	if len(got.Notes) == 0 {
+		t.Error("the pull went unreported, so a first run looks like it hung")
+	}
+}
+
+func TestProvisionLeavesAnAlreadyInstalledPackAlone(t *testing.T) {
+	h := &fakeHost{installed: []string{"nolabs-ai/claude        0.1.0   2026-08-31 19:59"}}
+
+	got, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"))
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if h.ran("nono", "pull") {
+		t.Errorf("re-pulled a pack that is already installed: %v", h.calls)
+	}
+	if len(got.Notes) != 0 {
+		t.Errorf("notes = %v, want silence when nothing was installed", got.Notes)
+	}
+}
+
+func TestProvisionChecksThePackEvenWhenTheProfileIsUnchanged(t *testing.T) {
+	h := &fakeHost{}
+	cfg := cfgFor(t, "name: api\nbackend: nono\n")
+
+	if _, err := Get("nono").Provision(h.host(), cfg); err != nil {
+		t.Fatalf("first Provision: %v", err)
+	}
+
+	second := &fakeHost{}
+	if _, err := Get("nono").Provision(second.host(), cfg); err != nil {
+		t.Fatalf("second Provision: %v", err)
+	}
+	if !second.ran("nono", "pull", "nolabs-ai/claude") {
+		t.Errorf("an unchanged profile skipped the pack check, so a fresh machine never gets it: %v", second.calls)
+	}
+}
+
+func TestProvisionExplainsAFailedPackPull(t *testing.T) {
+	h := &fakeHost{reject: "error: pack not found in registry"}
+
+	f := wantFailure(t, func() error {
+		_, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"))
+		return err
+	}())
+
+	if !strings.Contains(f.What, "nolabs-ai/claude") {
+		t.Errorf("the error does not name the pack: %+v", f)
+	}
+	if !strings.Contains(f.What, "not found in registry") {
+		t.Errorf("nono's own diagnostic is lost: %+v", f)
+	}
+}
+
+func TestProvisionPointsAtAllowCommandsWhenADeclaredRuntimeCannotInstall(t *testing.T) {
+	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n"))
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	joined := strings.Join(got.Notes, "\n")
+	if !strings.Contains(joined, "npm") || !strings.Contains(joined, "allow_commands") {
+		t.Errorf("node is declared but nothing says npm is denied or how to allow it: %v", got.Notes)
+	}
+}
+
+func TestProvisionStopsPointingAtAllowCommandsOnceTheCommandIsAllowed(t *testing.T) {
+	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\nallow_commands:\n  - npm\n"))
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	for _, note := range got.Notes {
+		if strings.Contains(note, "allow_commands") {
+			t.Errorf("still pointing at a key the config already sets: %q", note)
+		}
+	}
+}
+
+func TestProvisionSaysNothingAboutARuntimeWhosePackageManagerIsNotDenied(t *testing.T) {
+	got, err := Get("nono").Provision((&fakeHost{installed: []string{"nolabs-ai/claude 0.1.0"}}).host(),
+		cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  go: \"1.27\"\n  rust: \"1.90\"\n  bun: \"1.3\"\n"))
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if len(got.Notes) != 0 {
+		t.Errorf("go, rust and bun drive their own toolchains, which nono never denied: %v", got.Notes)
+	}
+}
+
+func TestProvisionRepeatsNoPointerForAProfileItDidNotRewrite(t *testing.T) {
+	h := &fakeHost{installed: []string{"nolabs-ai/claude 0.1.0"}}
+	cfg := cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n")
+
+	if _, err := Get("nono").Provision(h.host(), cfg); err != nil {
+		t.Fatalf("first Provision: %v", err)
+	}
+	got, err := Get("nono").Provision(h.host(), cfg)
+	if err != nil {
+		t.Fatalf("second Provision: %v", err)
+	}
+	if len(got.Notes) != 0 {
+		t.Errorf("every start repeats the pointer, which is the noise the grouping fixed: %v", got.Notes)
 	}
 }

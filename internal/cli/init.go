@@ -19,24 +19,35 @@ const kitIgnoreEntry = ".config/lid/.kit/"
 
 func newInitCommand(a *app.App) *cobra.Command {
 	var name string
+	var runtimes []string
 
 	cmd := &cobra.Command{
-		Use:   "init",
+		Use:   "init [backend]",
 		Short: "Create a starter lid config",
-		Args:  cobra.NoArgs,
+		Long:  "Create a starter lid config for a backend, defaulting to " + config.DefaultBackend + ".",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(a, name)
+			backend := config.DefaultBackend
+			if len(args) == 1 {
+				backend = args[0]
+			}
+			return runInit(a, name, backend, runtimes)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "sandbox name (defaults to the directory name)")
+	cmd.Flags().StringSliceVar(&runtimes, "runtimes", nil, "runtimes to pin, like node@24,go@1.27 ("+config.BackendSbx+" only)")
 
 	return cmd
 }
 
-func runInit(a *app.App, name string) error {
+func runInit(a *app.App, name, backend string, runtimes []string) error {
 	if existing, err := config.Discover(a.Cwd); err == nil {
 		fmt.Fprintln(a.Out, ui.Info.Render("Config already exists at "+existing))
 		return nil
+	}
+
+	if err := config.ValidateBackend(backend); err != nil {
+		return err
 	}
 
 	name, err := initName(a.Cwd, name)
@@ -44,7 +55,12 @@ func runInit(a *app.App, name string) error {
 		return err
 	}
 
-	body, err := config.Starter(name)
+	pins, err := initRuntimes(backend, runtimes)
+	if err != nil {
+		return err
+	}
+
+	body, err := config.Starter(config.StarterOptions{Name: name, Backend: backend, Runtimes: pins})
 	if err != nil {
 		return err
 	}
@@ -66,6 +82,17 @@ func runInit(a *app.App, name string) error {
 	fmt.Fprintln(a.Out, ui.Success.Render("Created "+path))
 	fmt.Fprintln(a.Out, ui.Info.Render("Edit it, then run 'lid start' to create your sandbox."))
 	return nil
+}
+
+func initRuntimes(backend string, entries []string) ([]config.RuntimePin, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	if backend != config.BackendSbx {
+		return nil, failure.New("the %s backend installs no runtimes, so --runtimes has nothing to pin", backend).
+			WithFix("drop the flag and add 'runtimes:' by hand to grant the host's toolchains, or run 'lid init %s'", config.BackendSbx)
+	}
+	return config.ParseRuntimePins(entries)
 }
 
 func initName(cwd, flag string) (string, error) {

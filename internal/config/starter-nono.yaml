@@ -1,0 +1,56 @@
+# lid sandbox configuration
+#
+# nono runs the agent as a caged host process, so this file describes what the
+# agent may reach on your machine. Keys the sbx backend uses to build an image
+# - base_image, template, packages, ports, workspace - do not apply here.
+
+name: {{ .Name }}
+agent: claude-code
+backend: nono
+
+# Language runtimes this project uses. nono installs nothing: declaring one
+# grants the host's toolchain and lets its package manager write its cache.
+{{- if .Runtimes }}
+runtimes:
+{{- range .Runtimes }}
+  {{ .Name }}: "{{ .Version }}"
+{{- end }}
+{{- else }}
+runtimes: {}
+  # node: "24"
+  # pnpm: "11"
+  # bun: "1.4.0"
+  # python: "3.12"
+  # go: "1.27"
+  # php: "8.5"
+  # rust: "1.98.0"
+{{- end }}
+
+# How much of the network the sandbox may reach. minimal is the LLM endpoints
+# only; developer adds package registries, GitHub, GitLab, sigstore and
+# documentation; enterprise adds the cloud provider APIs. Left out, the agent
+# above picks the profile nono maintains for it.
+# network_profile: developer
+
+# Extra hosts to allow, on top of whatever the profile above reaches.
+network: []
+  # - "*.npmjs.org"
+  # - "api.github.com"
+
+# Commands the sandbox denies by default that this project needs. nono lifts
+# them a group at a time, so allowing one unblocks the rest of its group -
+# 'lid start' prints exactly what each entry widens.
+allow_commands: []
+  # - npm
+  # - pip
+  # - brew
+
+# Inline environment variables.
+env: {}
+  # NODE_ENV: development
+
+# Environment files, loaded in order; later files win. Inline 'env' above
+# overrides all of them.
+env_file: []
+  # - .env
+  # - .env.sandbox

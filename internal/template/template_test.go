@@ -273,7 +273,7 @@ func TestRenderInstallsNodeBeforePnpm(t *testing.T) {
 // suggests has to be one the runtimes actually accept. This guards the whole
 // commented block, which no other test reads.
 func TestStarterConfigSuggestsInstallableRuntimeVersions(t *testing.T) {
-	starter, err := config.Starter("probe")
+	starter, err := config.Starter(config.StarterOptions{Name: "probe", Backend: config.BackendSbx})
 	if err != nil {
 		t.Fatalf("Starter: %v", err)
 	}
