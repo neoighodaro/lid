@@ -1,2 +1,5 @@
-.config/blvckhole/.kit/
+.config/blvckhole
 .derived
+.config/lid/.kit/
+/lid
+/dist/
