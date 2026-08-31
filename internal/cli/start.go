@@ -40,7 +40,7 @@ func newStartCommand(a *app.App) *cobra.Command {
 				return err
 			}
 			for _, warning := range warnings {
-				fmt.Fprintln(a.Err, ui.Err.Warn.Render(cfg.Backend+" backend: "+warning))
+				fmt.Fprintln(a.Err, ui.Err.Warn.Render(warning))
 			}
 
 			if printOnly {

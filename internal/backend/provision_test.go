@@ -266,3 +266,15 @@ func TestProvisionNamesTheProfileRelativeToTheProject(t *testing.T) {
 		t.Errorf("Ref %q does not name Path %q", got.Ref, got.Path)
 	}
 }
+
+func TestStartArgvGrantsTheProjectDirectoryWithoutPrompting(t *testing.T) {
+	for _, body := range []string{"name: lid\n", "name: lid\nagent: shell\n"} {
+		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc")
+		if err != nil {
+			t.Fatalf("StartArgv: %v", err)
+		}
+		if !contains(argv, "--allow-cwd") {
+			t.Errorf("argv %q has no --allow-cwd, so nono asks to share the project on every start", strings.Join(argv, " "))
+		}
+	}
+}

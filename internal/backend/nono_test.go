@@ -356,3 +356,38 @@ func TestNonoWarningsReadAsSentences(t *testing.T) {
 		}
 	}
 }
+
+func TestNonoStatesEachReasonOnceInsteadOfPerKey(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nclaude:\n  theme: dark\nmemory: notes.md\nworkspace: /workspace/api\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want the three keys named once under a shared reason", warnings)
+	}
+	for _, key := range []string{"claude", "memory", "workspace"} {
+		if !strings.Contains(warnings[0], key) {
+			t.Errorf("warning %q does not name %s", warnings[0], key)
+		}
+	}
+}
+
+func TestNonoWarningCountDoesNotGrowWithTheConfig(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nworkspace: /workspace/api\nhandoff:\n  enabled: true\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nscripts:\n  on_start:\n    - echo hi\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) > 2 {
+		t.Errorf("eight unhonoured keys produced %d warnings, want one per reason:\n%s", len(warnings), strings.Join(warnings, "\n"))
+	}
+}
+
+func TestNonoSeparatesWhatItCannotHonourFromWhatIsNotWiredUp(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nhandoff:\n  enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %v, want the host-nature key and the unwired one kept apart", warnings)
+	}
+}

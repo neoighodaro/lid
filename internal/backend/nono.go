@@ -128,7 +128,9 @@ func (n nono) Provision(h Host, cfg *config.Config) (Provisioned, error) {
 
 // StartArgv is the command that hands the terminal to the sandboxed agent.
 // --workdir is passed explicitly so a session started from a subdirectory still
-// resolves $WORKDIR to the project root the profile was written for.
+// resolves $WORKDIR to the project root the profile was written for, and
+// --allow-cwd answers the share prompt the profile's workdir access already
+// implies. The access level still comes from the profile, not the flag.
 func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) {
 	command, ok := nonoAgentCommands[cfg.Agent]
 	if !ok {
@@ -142,7 +144,7 @@ func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) 
 		verb = "shell"
 	}
 
-	argv := []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir}
+	argv := []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
 	if len(command) > 0 {
 		argv = append(argv, "--")
 		argv = append(argv, command...)
@@ -171,25 +173,46 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 	}
 
 	var warnings []string
-	for _, check := range []struct {
-		set  bool
-		what string
-		why  string
+	for _, group := range []struct {
+		why    string
+		fields []nonoField
 	}{
-		{cfg.Claude.IsSet(), "claude", "a nono session runs the agent on your host, where it already uses your real ~/.claude"},
-		{len(cfg.Shell.Aliases) > 0 || cfg.Shell.Directory != "", "shell.aliases", "a nono session uses your host shell config"},
-		{cfg.Memory != "", "memory", "a nono session reads the project's real memory file, which lid will not rewrite"},
-		{len(cfg.PHP.Extensions) > 0, "php.extensions", "lid cannot install php extensions on your host"},
-		{cfg.Workspace != "", "workspace", "a nono session works in the project directory itself, so there is nowhere to mount it"},
-		{cfg.Handoff.Enabled, "handoff", "not wired up for the nono backend yet"},
-		{len(cfg.Bridges) > 0, "bridges", "a nono session shares the host network, so host services are already reachable"},
-		{len(cfg.Scripts.OnStart) > 0, "scripts.on_start", "not wired up for the nono backend yet"},
+		{"a nono session runs on your host", []nonoField{
+			{"claude", cfg.Claude.IsSet()},
+			{"shell.aliases", len(cfg.Shell.Aliases) > 0 || cfg.Shell.Directory != ""},
+			{"memory", cfg.Memory != ""},
+			{"php.extensions", len(cfg.PHP.Extensions) > 0},
+			{"workspace", cfg.Workspace != ""},
+			{"bridges", len(cfg.Bridges) > 0},
+		}},
+		{"not wired up for nono yet", []nonoField{
+			{"handoff", cfg.Handoff.Enabled},
+			{"scripts.on_start", len(cfg.Scripts.OnStart) > 0},
+		}},
 	} {
-		if check.set {
-			warnings = append(warnings, fmt.Sprintf("ignoring %s: %s", check.what, check.why))
+		if set := nonoFieldsSet(group.fields); set != "" {
+			warnings = append(warnings, fmt.Sprintf("ignoring %s: %s", set, group.why))
 		}
 	}
 	return warnings, nil
+}
+
+// nonoField is a config key and whether the user set it.
+type nonoField struct {
+	name string
+	set  bool
+}
+
+// nonoFieldsSet joins the keys the user set, in the order given. Grouping them
+// under one reason keeps the warning a line rather than a paragraph per key.
+func nonoFieldsSet(fields []nonoField) string {
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f.set {
+			names = append(names, f.name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func (n nono) Render(cfg *config.Config) (string, error) {
