@@ -7,7 +7,10 @@ type bun struct{}
 func (bun) Name() string { return "bun" }
 
 func (bun) Validate(version string) error {
-	return requireVersion("bun", version)
+	if err := requireVersion("bun", version); err != nil {
+		return err
+	}
+	return rejectFloating("bun", version, "latest")
 }
 
 func (bun) RootBlock(string) string { return "" }

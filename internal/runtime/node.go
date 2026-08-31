@@ -10,7 +10,10 @@ type node struct{}
 func (node) Name() string { return "node" }
 
 func (node) Validate(version string) error {
-	return requireVersion("node", version)
+	if err := requireVersion("node", version); err != nil {
+		return err
+	}
+	return rejectFloating("node", version, "latest")
 }
 
 func (node) RootBlock(version string) string {

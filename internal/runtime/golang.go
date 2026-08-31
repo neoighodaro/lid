@@ -10,7 +10,10 @@ type golang struct{}
 func (golang) Name() string { return "go" }
 
 func (golang) Validate(version string) error {
-	return requireVersion("go", version)
+	if err := requireVersion("go", version); err != nil {
+		return err
+	}
+	return rejectFloating("go", version, "latest")
 }
 
 func (golang) RootBlock(version string) string {

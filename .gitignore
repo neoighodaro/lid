@@ -3,3 +3,4 @@
 .config/lid/.kit/
 /lid
 /dist/
+/build/

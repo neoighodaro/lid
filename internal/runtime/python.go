@@ -7,7 +7,10 @@ type python struct{}
 func (python) Name() string { return "python" }
 
 func (python) Validate(version string) error {
-	return requireVersion("python", version)
+	if err := requireVersion("python", version); err != nil {
+		return err
+	}
+	return rejectFloating("python", version, "latest")
 }
 
 // RootBlock is empty: python is installed per-user via uv (see AgentBlock).

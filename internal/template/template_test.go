@@ -5,10 +5,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/runtime"
 )
 
 func cfgFor(t *testing.T, body string) *config.Config {
@@ -110,18 +112,18 @@ func TestRenderIsDeterministicAcrossRuntimeOrder(t *testing.T) {
 }
 
 func TestRenderValidatesRuntimeVersions(t *testing.T) {
-	cfg := cfgFor(t, "name: lid\nruntimes:\n  php: \"8.1\"\n")
+	cfg := cfgFor(t, "name: lid\nruntimes:\n  php: \"9.9\"\n")
 
 	err := renderErr(t, cfg)
-	if !strings.Contains(err.Error(), "php") || !strings.Contains(err.Error(), "8.1") {
+	if !strings.Contains(err.Error(), "php") || !strings.Contains(err.Error(), "9.9") {
 		t.Errorf("error = %v, want it to name the runtime and version", err)
 	}
 }
 
 func TestRenderPassesPHPExtensionsToTheRuntime(t *testing.T) {
-	out := render(t, "name: lid\nruntimes:\n  php: \"8.4\"\nphp:\n  extensions:\n    - imagick\n")
+	out := render(t, "name: lid\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - imagick\n")
 
-	if !strings.Contains(out, "php8.4-imagick") {
+	if !strings.Contains(out, "php8.5-imagick") {
 		t.Errorf("configured php extension is missing:\n%s", out)
 	}
 }
@@ -242,7 +244,7 @@ func TestBuildReportsAFailedDockerBuild(t *testing.T) {
 }
 
 func TestBuildDoesNotRunDockerWhenRenderingFails(t *testing.T) {
-	cfg := cfgFor(t, "name: lid\nruntimes:\n  php: \"8.1\"\n")
+	cfg := cfgFor(t, "name: lid\nruntimes:\n  php: \"9.9\"\n")
 	rec := &recorder{}
 
 	if err := (&Builder{Exec: rec.exec}).Build(cfg); err == nil {
@@ -263,5 +265,47 @@ func TestRenderInstallsNodeBeforePnpm(t *testing.T) {
 	}
 	if node > pnpm {
 		t.Errorf("pnpm is installed before the npm it needs:\n%s", out)
+	}
+}
+
+// The starter config is the first thing a user sees, so every version it
+// suggests has to be one the runtimes actually accept. This guards the whole
+// commented block, which no other test reads.
+func TestStarterConfigSuggestsInstallableRuntimeVersions(t *testing.T) {
+	starter, err := config.Starter("probe")
+	if err != nil {
+		t.Fatalf("Starter: %v", err)
+	}
+
+	suggestion := regexp.MustCompile(`^\s*#\s*([a-z]+):\s*"?([^"\s]+)"?\s*$`)
+	inRuntimes := false
+	found := 0
+
+	for _, line := range strings.Split(starter, "\n") {
+		if strings.HasPrefix(line, "runtimes:") {
+			inRuntimes = true
+			continue
+		}
+		if inRuntimes && strings.TrimSpace(line) == "" {
+			break
+		}
+		m := suggestion.FindStringSubmatch(line)
+		if !inRuntimes || m == nil {
+			continue
+		}
+		name, version := m[1], m[2]
+		r := runtime.Get(name, runtime.Options{})
+		if r == nil {
+			t.Errorf("starter suggests runtime %q, which is not registered", name)
+			continue
+		}
+		if err := r.Validate(version); err != nil {
+			t.Errorf("starter suggests %s: %q, which is invalid: %v", name, version, err)
+		}
+		found++
+	}
+
+	if found == 0 {
+		t.Fatal("no runtime suggestions found in the starter config")
 	}
 }
