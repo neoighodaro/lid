@@ -401,3 +401,32 @@ func TestConfigCommandSummarizesLists(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigCommandWarnsAboutUnverifiedAgent(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nagent: codex\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	if !strings.Contains(got.err, "codex") {
+		t.Errorf("stderr does not name the unverified agent:\n%s", got.err)
+	}
+	if !strings.Contains(got.err, "verified") {
+		t.Errorf("stderr does not say the agent is unverified:\n%s", got.err)
+	}
+}
+
+func TestAgentWarningStaysOffStdout(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\nagent: codex\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	if strings.Contains(got.out, "not verified") {
+		t.Errorf("the warning leaked into stdout:\n%s", got.out)
+	}
+}

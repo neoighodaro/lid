@@ -742,3 +742,49 @@ func TestStarterRejectsInvalidNames(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyClaudeCodeIsVerified(t *testing.T) {
+	if len(VerifiedAgents) != 1 || VerifiedAgents[0] != DefaultAgent {
+		t.Errorf("VerifiedAgents = %v, want just %q — add an agent here only once lid does its setup and it has been exercised", VerifiedAgents, DefaultAgent)
+	}
+}
+
+func TestVerifiedAgentsAreAllKnown(t *testing.T) {
+	for _, agent := range VerifiedAgents {
+		if !contains(KnownAgents, agent) {
+			t.Errorf("verified agent %q is missing from KnownAgents", agent)
+		}
+	}
+}
+
+func TestAgentVerified(t *testing.T) {
+	if !AgentVerified("claude-code") {
+		t.Error("AgentVerified(claude-code) = false, want true")
+	}
+	for _, agent := range []string{"codex", "gemini", "shell", "nonsense"} {
+		if AgentVerified(agent) {
+			t.Errorf("AgentVerified(%q) = true, want false", agent)
+		}
+	}
+}
+
+func TestLoadAcceptsKnownButUnverifiedAgent(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nagent: codex\n")
+
+	if cfg.Agent != "codex" {
+		t.Errorf("Agent = %q, want %q", cfg.Agent, "codex")
+	}
+	if AgentVerified(cfg.Agent) {
+		t.Error("codex should not be reported as verified")
+	}
+}
+
+func TestUnknownAgentErrorListsEveryKnownAgent(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nagent: clode-code\n")
+
+	for _, agent := range KnownAgents {
+		if !strings.Contains(err.Error(), agent) {
+			t.Errorf("error = %q, want it to list %q", err.Error(), agent)
+		}
+	}
+}

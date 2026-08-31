@@ -22,6 +22,8 @@ func newConfigCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
+			warnUnverifiedAgent(a, cfg)
+
 			for _, row := range configRows(cfg) {
 				fmt.Fprintf(a.Out, "%s %s\n", ui.Label.Render(fmt.Sprintf("%-9s", row[0])), row[1])
 			}

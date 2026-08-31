@@ -20,13 +20,19 @@ import (
 const (
 	DefaultAgent   = "claude-code"
 	DefaultBackend = "sbx"
-	MaxNameLen = 63
+	MaxNameLen     = 63
 )
 
-// Agents and Runtimes are sorted so the "must be one of" errors they produce
-// are stable and testable.
+// KnownAgents is the agent vocabulary lid accepts, sorted so the "must be one
+// of" error it produces is stable. VerifiedAgents is the subset lid actually
+// does setup work for and has been exercised against; the rest are accepted so
+// nobody is blocked from trying one, but callers should warn.
 var (
-	Agents = []string{
+	VerifiedAgents = []string{
+		"claude-code",
+	}
+
+	KnownAgents = []string{
 		"claude-code",
 		"codex",
 		"copilot",
@@ -265,8 +271,8 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if !contains(Agents, c.Agent) {
-		return fmt.Errorf("unknown agent %q: must be one of %s", c.Agent, strings.Join(Agents, ", "))
+	if !contains(KnownAgents, c.Agent) {
+		return fmt.Errorf("unknown agent %q: must be one of %s", c.Agent, strings.Join(KnownAgents, ", "))
 	}
 
 	if err := c.validateTemplateExclusions(); err != nil {
@@ -373,6 +379,12 @@ func validatePort(port string) error {
 }
 
 func validPortNumber(n int) bool { return n >= 1 && n <= 65535 }
+
+// AgentVerified reports whether lid does agent-specific setup for name and has
+// been exercised against it.
+func AgentVerified(name string) bool {
+	return contains(VerifiedAgents, name)
+}
 
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
