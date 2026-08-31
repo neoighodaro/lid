@@ -1,0 +1,95 @@
+# lid sandbox configuration
+
+name: {{ .Name }}
+agent: claude-code
+
+# Sandbox backend.
+# backend: sbx
+
+# Copy the project to this directory inside the sandbox after creation.
+# When unset, the project stays at the mirrored host path.
+# workspace: /workspace
+
+# Custom template image, which skips Dockerfile generation. When set,
+# 'packages', 'runtimes' and 'bridges' are unavailable - install and wire
+# them up in your own Dockerfile instead.
+# template: docker.io/my-org/custom-template:v1
+
+# System packages, installed with apt-get.
+packages: []
+  # - ripgrep
+  # - jq
+  # - xz-utils
+
+# Language runtimes.
+runtimes: {}
+  # node: "24"
+  # pnpm: "11"
+  # bun: "latest"
+  # python: "3.12"
+  # go: "1.27"
+  # php: "8.4"
+  # rust: "stable"
+
+# Extra PHP extensions, added to the defaults.
+# php:
+#   extensions:
+#     - sqlite3
+#     - imagick
+
+# Ports published from the sandbox to the host.
+ports: []
+  # - 3000
+  # - "8080:80"
+  # - "5432:5432/tcp"
+
+# Inline environment variables.
+env: {}
+  # NODE_ENV: development
+
+# Environment files, loaded in order; later files win. Inline 'env' above
+# overrides all of them.
+env_file: []
+  # - .env
+  # - .env.sandbox
+
+# Network allowlist. Only these host patterns are reachable.
+network: []
+  # - "*.npmjs.org"
+  # - "api.github.com"
+
+# Commands run inside the sandbox at lifecycle points.
+scripts:
+  # Once, right after the sandbox is created.
+  on_create: []
+    # - pnpm install
+
+  # On every start, including resume after a stop. Must be idempotent.
+  on_start: []
+    # - ./scripts/warm-cache.sh
+
+shell:
+  # Working directory when opening a shell.
+  # directory: /home/agent/project
+
+  # Aliases, added alongside the built-in ones.
+  aliases: {}
+    # g: git
+
+# Claude Code customization.
+claude:
+  # theme: ./my-theme.json
+
+  plugins:
+    marketplaces: []
+      # - anthropics/claude-plugins-official
+    install: []
+      # - superpowers@claude-plugins-official
+
+  # Merged into the agent's settings.json.
+  settings: {}
+    # alwaysThinkingEnabled: true
+
+# Instructions injected into the agent's memory file.
+# memory: |
+#   Project-specific instructions here.
