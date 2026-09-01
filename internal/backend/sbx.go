@@ -40,7 +40,7 @@ func (sbx) Validate(cfg *config.Config) ([]string, error) {
 	}
 
 	_, hasPHP := cfg.Runtimes["php"]
-	var warnings []string
+	warnings := handoffAgentWarning(cfg)
 	for _, group := range []struct {
 		why    string
 		fields []field

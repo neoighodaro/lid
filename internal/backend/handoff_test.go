@@ -487,3 +487,42 @@ func TestTheSkillsMonitorLoopSaysWhenTheBrokerIsGone(t *testing.T) {
 	down.Store(false)
 	waitForLine(t, out, "broker reachable again", 5*time.Second)
 }
+
+// The broker address and the network hole reach every agent, but the skill is
+// written for Claude Code, so any other agent is left reachable and untaught.
+func TestAnAgentThatCannotBeTaughtHandoffIsCalledOut(t *testing.T) {
+	for _, backendName := range []string{config.BackendSbx, config.BackendNono} {
+		cfg := sbxCfg(t, "name: api\nbackend: "+backendName+"\nagent: codex\nhandoff:\n  enabled: true\n")
+
+		warnings, err := Get(backendName).Validate(cfg)
+		if err != nil {
+			t.Fatalf("%s Validate: %v", backendName, err)
+		}
+		if !containsSubstring(warnings, "codex") || !containsSubstring(warnings, cfg.HandoffURL()) {
+			t.Errorf("%s warnings = %v, want one naming codex and the broker it is handed", backendName, warnings)
+		}
+	}
+}
+
+func TestTheAgentTheSkillIsWrittenForIsNotWarnedAbout(t *testing.T) {
+	for _, backendName := range []string{config.BackendSbx, config.BackendNono} {
+		cfg := sbxCfg(t, "name: api\nbackend: "+backendName+"\nhandoff:\n  enabled: true\n")
+
+		warnings, err := Get(backendName).Validate(cfg)
+		if err != nil {
+			t.Fatalf("%s Validate: %v", backendName, err)
+		}
+		if containsSubstring(warnings, "nothing telling it how") {
+			t.Errorf("%s warnings = %v, want none: claude-code gets the skill", backendName, warnings)
+		}
+	}
+}
+
+func containsSubstring(warnings []string, want string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, want) {
+			return true
+		}
+	}
+	return false
+}

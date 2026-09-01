@@ -371,6 +371,7 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 
 	warnings := nonoUnblockWarnings(cfg)
 	warnings = append(warnings, nonoRemapWarnings(cfg)...)
+	warnings = append(warnings, handoffAgentWarning(cfg)...)
 	for _, group := range []struct {
 		why    string
 		fields []field

@@ -49,6 +49,14 @@ func hostIsLocal(host string) bool {
 	return false
 }
 
+func handoffAgentWarning(cfg *config.Config) []string {
+	if !cfg.Handoff.Enabled || config.IsClaudeAgent(cfg.Agent) {
+		return nil
+	}
+	return []string{fmt.Sprintf("handoff is on, but the skill lid installs is written for %s: %s gets the broker at %s and nothing telling it how to use it",
+		config.AgentClaudeCode, cfg.Agent, cfg.HandoffURL())}
+}
+
 func InstallHandoffSkill(h Host, cfg *config.Config, force bool) (string, error) {
 	if !config.IsClaudeAgent(cfg.Agent) {
 		return "", failure.New("the handoff skill is written for %s, not %s", config.AgentClaudeCode, cfg.Agent).
