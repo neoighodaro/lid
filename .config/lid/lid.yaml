@@ -28,7 +28,6 @@ claude:
       - claude-dashboard@claude-dashboard
       - commit-commands@claude-code-plugins
       - security-guidance@claude-plugins-official
-      - swift-lsp@claude-plugins-official
   settings:
     tui: default
     alwaysThinkingEnabled: true

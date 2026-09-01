@@ -12,7 +12,11 @@ import (
 	"github.com/neoighodaro/lid/internal/template"
 )
 
-const sbxConfigHash = "/home/agent/.lid-config-hash"
+const (
+	sbxConfigHash      = "/home/agent/.lid-config-hash"
+	claudeSettingsFile = ".claude/settings.json"
+	claudeMemoryFile   = ".claude/CLAUDE.md"
+)
 
 type sbx struct{}
 
@@ -30,11 +34,9 @@ func (sbx) EnsureAvailable(h Host) error {
 
 func (sbx) Validate(cfg *config.Config) ([]string, error) {
 	set := fieldsSet([]field{
-		{"claude.settings", len(cfg.Claude.Settings) > 0},
 		{"claude.theme", cfg.Claude.Theme != ""},
 		{"shell.aliases", len(cfg.Shell.Aliases) > 0 || cfg.Shell.Directory != ""},
-		{"memory", cfg.Memory != ""},
-		{"zellij", cfg.Zellij.DisplayName != ""},
+		{"memory", cfg.Memory != "" && !config.IsClaudeAgent(cfg.Agent)},
 		{"handoff", cfg.Handoff.Enabled},
 		{"bridges", len(cfg.Bridges) > 0},
 		{"scripts.on_start", len(cfg.Scripts.OnStart) > 0},
@@ -60,7 +62,7 @@ func (s sbx) Render(cfg *config.Config) (string, error) {
 	return b.String(), nil
 }
 
-func (s sbx) Provision(h Host, cfg *config.Config) (Provisioned, error) {
+func (s sbx) Provision(h Host, cfg *config.Config, opts Options) (Provisioned, error) {
 	image := sbxImage(cfg)
 	hash, err := cfg.FileHash()
 	if err != nil {
@@ -68,11 +70,12 @@ func (s sbx) Provision(h Host, cfg *config.Config) (Provisioned, error) {
 	}
 
 	if sbxExists(h, cfg) {
-		if current, err := sbxCurrentHash(h, cfg); err == nil && current == hash {
-			return Provisioned{Path: image, Ref: cfg.Name, Changed: false}, nil
+		if !opts.Rebuild {
+			current, err := sbxCurrentHash(h, cfg)
+			return Provisioned{Path: image, Ref: cfg.Name, Stale: err == nil && current != hash}, nil
 		}
 		if err := h.exec([]string{"sbx", "rm", "-f", cfg.Name}); err != nil {
-			return Provisioned{}, failure.New("cannot remove the stale %s sandbox", cfg.Name).
+			return Provisioned{}, failure.New("cannot remove the %s sandbox", cfg.Name).
 				WithFix("remove it yourself with 'sbx rm -f %s', then run lid again", cfg.Name)
 		}
 	}
@@ -96,6 +99,53 @@ func (s sbx) Provision(h Host, cfg *config.Config) (Provisioned, error) {
 	}
 
 	return Provisioned{Path: image, Ref: cfg.Name, Changed: true}, nil
+}
+
+func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
+	if !config.IsClaudeAgent(cfg.Agent) {
+		return nil
+	}
+	if err := sbxApplySettings(h, cfg); err != nil {
+		return err
+	}
+	return sbxApplyMemory(h, cfg)
+}
+
+func sbxApplySettings(h Host, cfg *config.Config) error {
+	want := claudeSettings(cfg)
+	if len(want) == 0 {
+		return nil
+	}
+
+	current, err := h.output(sbxReadSettingsArgv(cfg))
+	if err != nil {
+		return failure.New("cannot read the agent's settings in the %s sandbox: %s", cfg.Name, firstLine(current)).
+			WithFix("the sandbox has to be running for lid to configure the agent in it")
+	}
+
+	body, changed, err := applySettings(current, want)
+	if err != nil || !changed {
+		return err
+	}
+
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, claudeSettingsFile, body)); err != nil {
+		return failure.New("cannot write the agent's settings in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix("the agent would start with settings %s does not describe", cfg.Ref())
+	}
+	return nil
+}
+
+func sbxApplyMemory(h Host, cfg *config.Config) error {
+	memory := strings.TrimSpace(cfg.Memory)
+	if memory == "" {
+		return nil
+	}
+
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, claudeMemoryFile, memory)); err != nil {
+		return failure.New("cannot write the agent's memory in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix("the agent would start without the memory %s gives it", cfg.Ref())
+	}
+	return nil
 }
 
 func (s sbx) StartArgv(cfg *config.Config, _ string) ([]string, error) {
@@ -166,6 +216,23 @@ func sbxCreateArgv(cfg *config.Config) []string {
 	}
 
 	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+}
+
+func sbxReadSettingsArgv(cfg *config.Config) []string {
+	read := fmt.Sprintf("cat %q 2>/dev/null || true", "$HOME/"+claudeSettingsFile)
+	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", read}
+}
+
+func sbxWriteHomeFileArgv(cfg *config.Config, rel, body string) []string {
+	path := "$HOME/" + rel
+	script := fmt.Sprintf(`set -e
+mkdir -p %q
+cat > %q <<'LID_FILE'
+%s
+LID_FILE
+mv %q %q
+`, filepath.Dir(path), path+".lid", strings.TrimRight(body, "\n"), path+".lid", path)
+	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", script}
 }
 
 func sbxHashArgv(cfg *config.Config, hash string) []string {

@@ -12,6 +12,7 @@ import (
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/zellij"
 )
 
 func write(t *testing.T, dir, rel, body string) {
@@ -987,5 +988,182 @@ func TestInitNamesTheUnknownBackendRatherThanAFlagItRejects(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "--runtimes") {
 		t.Errorf("the error blames the flag when the backend is the thing lid cannot run: %v (stderr: %s)", err, got.err)
+	}
+}
+
+// sbxStartHost stands in for a machine with sbx and docker installed and one
+// sandbox already created, so a start test can exercise what lid does to a
+// sandbox somebody may already be working in.
+type sbxStartHost struct {
+	sandbox  string
+	hash     string
+	settings string
+	paneID   string
+	probes   [][]string
+	argv     []string
+}
+
+// zellij answers as a session whose focused pane is terminal_7, on a tab that
+// has never been renamed.
+func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
+	h.probes = append(h.probes, argv)
+	switch {
+	case strings.Contains(strings.Join(argv, " "), "list-clients"):
+		return []byte("CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_7 lid\n"), nil
+	case strings.Contains(strings.Join(argv, " "), "list-tabs"):
+		return []byte(`[{"name": "Tab #1", "active": true, "are_floating_panes_visible": false}]`), nil
+	}
+	return nil, nil
+}
+
+func (h *sbxStartHost) lookPath(name string) (string, error) {
+	return "/usr/local/bin/" + name, nil
+}
+
+func (h *sbxStartHost) output(argv []string) ([]byte, error) {
+	h.probes = append(h.probes, argv)
+	line := strings.Join(argv, " ")
+	switch {
+	case strings.Contains(line, "sbx ls"):
+		return []byte(h.sandbox + "\n"), nil
+	case strings.Contains(line, ".lid-config-hash"):
+		if h.hash == "" {
+			return nil, errors.New("exit status 1")
+		}
+		return []byte(h.hash + "\n"), nil
+	case strings.Contains(line, "cat \"$HOME/.claude/settings.json\""):
+		return []byte(h.settings), nil
+	}
+	return nil, nil
+}
+
+func (h *sbxStartHost) exec(argv []string, _, _ io.Writer) error {
+	h.probes = append(h.probes, argv)
+	return nil
+}
+
+func (h *sbxStartHost) attach(argv []string, _ io.Reader, _, _ io.Writer) error {
+	h.argv = argv
+	return nil
+}
+
+func (h *sbxStartHost) ran(fragment string) bool {
+	for _, probe := range h.probes {
+		if strings.Contains(strings.Join(probe, " "), fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) result {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: "v1.2.3",
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     cwd,
+		Exec:    h.exec,
+		Host:    backend.Host{LookPath: h.lookPath, Output: h.output, Exec: h.exec},
+		Attach:  h.attach,
+		Zellij:  zellij.Session{PaneID: h.paneID, Run: h.zellij},
+	}
+	root := NewRootCommand(a)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("%v: %v\nstderr: %s", args, err, errBuf.String())
+	}
+	return result{out: out.String(), err: errBuf.String()}
+}
+
+func TestStartKeepsTheRunningSandboxWhenTheConfigHasChanged(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "built-from-an-older-config", settings: "{}"}
+
+	res := runSbxStart(t, dir, h, "start")
+
+	if h.ran("sbx rm") {
+		t.Errorf("a config edit destroyed the sandbox and every session in it: %v", h.probes)
+	}
+	if !strings.Contains(res.err, "--rebuild") {
+		t.Errorf("nothing says how to apply the change:\n%s", res.err)
+	}
+	if strings.Join(h.argv, " ") != "sbx run --name api" {
+		t.Errorf("launched %v, want it to attach to the sandbox that was already there", h.argv)
+	}
+}
+
+func TestStartRebuildReplacesTheSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "built-from-an-older-config", settings: "{}"}
+
+	runSbxStart(t, dir, h, "start", "--rebuild")
+
+	if !h.ran("sbx rm") {
+		t.Errorf("--rebuild left the old sandbox standing: %v", h.probes)
+	}
+	if !h.ran("sbx create") {
+		t.Errorf("--rebuild never created the replacement: %v", h.probes)
+	}
+}
+
+func TestStartAppliesTheConfiguredClaudeSettingsBeforeLaunching(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nclaude:\n  settings:\n    model: claude-opus-5\n")
+	h := &sbxStartHost{sandbox: "api", settings: `{"theme": "dark"}`}
+
+	runSbxStart(t, dir, h, "start")
+
+	if !h.ran("claude-opus-5") {
+		t.Errorf("the agent starts on whatever model the sandbox defaults to: %v", h.probes)
+	}
+	if h.argv == nil {
+		t.Error("the agent was never launched")
+	}
+}
+
+func TestStartWarnsButStillLaunchesWhenTheSettingsCannotBeApplied(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nclaude:\n  settings:\n    model: claude-opus-5\n")
+	h := &sbxStartHost{sandbox: "api", settings: "not json"}
+
+	res := runSbxStart(t, dir, h, "start")
+
+	if !strings.Contains(res.err, "settings") {
+		t.Errorf("stderr says nothing about the settings lid could not apply:\n%s", res.err)
+	}
+	if h.argv == nil {
+		t.Error("a settings problem stopped the agent from starting at all")
+	}
+}
+
+func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7"}
+
+	res := runSbxStart(t, dir, h, "start")
+
+	if !h.ran("rename-tab") {
+		t.Errorf("the tab kept its default name: %v", h.probes)
+	}
+	if strings.Contains(res.err, "zellij") {
+		t.Errorf("zellij is wired up but still reported as ignored:\n%s", res.err)
+	}
+}
+
+func TestStartPrintLeavesTheZellijTabAlone(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7"}
+
+	runSbxStart(t, dir, h, "start", "--print")
+
+	if h.ran("rename-tab") {
+		t.Errorf("--print renamed a tab it never started an agent in: %v", h.probes)
 	}
 }

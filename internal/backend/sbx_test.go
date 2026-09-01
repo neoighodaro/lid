@@ -113,7 +113,7 @@ func TestSbxBuildsTheImageAndCreatesTheSandbox(t *testing.T) {
 	f := &sbxFake{}
 	cfg := sbxCfg(t, "name: api\n")
 
-	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg)
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSbxBuildsTheImageAndCreatesTheSandbox(t *testing.T) {
 func TestSbxCreatePassesTheResolvedEnvironment(t *testing.T) {
 	f := &sbxFake{}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nenv:\n  B: 2\n  A: 1\n")); err != nil {
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nenv:\n  B: 2\n  A: 1\n"), Options{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if !f.ran("sbx create", "-e A=1 -e B=2") {
@@ -146,7 +146,7 @@ func TestSbxCreatePassesTheResolvedEnvironment(t *testing.T) {
 func TestSbxCreatePublishesTheConfiguredPorts(t *testing.T) {
 	f := &sbxFake{}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nports:\n  - 8080:3000\n")); err != nil {
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nports:\n  - 8080:3000\n"), Options{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if !f.ran("sbx create", "-p 8080:3000") {
@@ -157,7 +157,7 @@ func TestSbxCreatePublishesTheConfiguredPorts(t *testing.T) {
 func TestSbxAllowsTheConfiguredDomains(t *testing.T) {
 	f := &sbxFake{}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nnetwork:\n  - a.example.com\n  - b.example.com\n")); err != nil {
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nnetwork:\n  - a.example.com\n  - b.example.com\n"), Options{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if !f.ran("sbx policy allow network", "--sandbox api", "a.example.com,b.example.com") {
@@ -173,7 +173,7 @@ func TestSbxLeavesASandboxThatMatchesTheConfigAlone(t *testing.T) {
 	}
 	f := &sbxFake{sandboxes: []string{"api"}, hash: hash}
 
-	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg)
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -185,24 +185,84 @@ func TestSbxLeavesASandboxThatMatchesTheConfigAlone(t *testing.T) {
 	}
 }
 
-func TestSbxReplacesASandboxTheConfigHasMovedOn(t *testing.T) {
+func TestSbxKeepsASandboxTheConfigHasMovedOnAndSaysSo(t *testing.T) {
 	f := &sbxFake{sandboxes: []string{"api"}, hash: "stale"}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\n")); err != nil {
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\n"), Options{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if f.ran("sbx rm") {
+		t.Errorf("a config edit destroyed a sandbox somebody could be working in\ncalls: %v", f.calls)
+	}
+	if !provisioned.Stale {
+		t.Error("Stale = false, so nothing tells the user their edit has not been applied")
+	}
+}
+
+func TestSbxRebuildReplacesTheSandbox(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}, hash: "stale"}
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\n"), Options{Rebuild: true}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if !f.ran("sbx rm", "api") {
-		t.Errorf("the stale sandbox was not removed\ncalls: %v", f.calls)
+		t.Errorf("--rebuild left the old sandbox in place\ncalls: %v", f.calls)
 	}
 	if !f.ran("sbx create") {
-		t.Errorf("no sandbox was created to replace the stale one\ncalls: %v", f.calls)
+		t.Errorf("no sandbox was created to replace the old one\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxRebuildReplacesASandboxThatStillMatchesTheConfig(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+	hash, err := cfg.FileHash()
+	if err != nil {
+		t.Fatalf("FileHash: %v", err)
+	}
+	f := &sbxFake{sandboxes: []string{"api"}, hash: hash}
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{Rebuild: true}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx rm", "api") {
+		t.Errorf("--rebuild is how a user rebuilds a sandbox the config still matches\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxSaysNothingIsStaleWhenTheSandboxMatches(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+	hash, err := cfg.FileHash()
+	if err != nil {
+		t.Fatalf("FileHash: %v", err)
+	}
+	f := &sbxFake{sandboxes: []string{"api"}, hash: hash}
+
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if provisioned.Stale {
+		t.Error("Stale = true for a sandbox built from this very config")
+	}
+}
+
+func TestSbxSaysNothingIsStaleWhenTheSandboxHasNoRecordedHash(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}}
+
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\n"), Options{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if provisioned.Stale {
+		t.Error("a sandbox lid cannot ask about was reported as drifted")
 	}
 }
 
 func TestSbxUsesAConfiguredTemplateWithoutBuilding(t *testing.T) {
 	f := &sbxFake{}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\ntemplate: my-image:1\n")); err != nil {
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\ntemplate: my-image:1\n"), Options{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if f.ran("docker build") {
@@ -216,7 +276,7 @@ func TestSbxUsesAConfiguredTemplateWithoutBuilding(t *testing.T) {
 func TestSbxRunsOnCreateScriptsInTheNewSandbox(t *testing.T) {
 	f := &sbxFake{}
 
-	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nscripts:\n  on_create:\n    - composer install\n")); err != nil {
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nscripts:\n  on_create:\n    - composer install\n"), Options{}); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 	if !f.ran("sbx exec", "composer install") {
@@ -224,8 +284,40 @@ func TestSbxRunsOnCreateScriptsInTheNewSandbox(t *testing.T) {
 	}
 }
 
+func TestSbxDoesNotWarnAboutClaudeSettingsItNowApplies(t *testing.T) {
+	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nclaude:\n  settings:\n    model: claude-opus-5\n"))
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: claude.settings reaches the sandbox now", warnings)
+	}
+}
+
 func TestSbxWarnsAboutTheKeysItDoesNotHonourYet(t *testing.T) {
+	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n"))
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "handoff") {
+		t.Errorf("warnings = %v, want one naming handoff", warnings)
+	}
+}
+
+func TestSbxDoesNotWarnAboutMemoryItNowGivesTheAgent(t *testing.T) {
 	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nmemory: be nice\n"))
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: memory reaches the sandbox now", warnings)
+	}
+}
+
+// Memory lands in ~/.claude/CLAUDE.md, which only Claude reads, so an agent lid
+// has no memory file for still has to be told its memory is going nowhere.
+func TestSbxStillWarnsAboutMemoryForAnAgentItCannotGiveItTo(t *testing.T) {
+	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nagent: codex\nmemory: be nice\n"))
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

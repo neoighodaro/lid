@@ -167,7 +167,7 @@ func (nono) EnsureAvailable(h Host) error {
 // Provision writes the profile nono will be given and has nono check it. An
 // unchanged profile is left alone: re-validating it costs a subprocess and
 // tells the user nothing new.
-func (n nono) Provision(h Host, cfg *config.Config) (Provisioned, error) {
+func (n nono) Provision(h Host, cfg *config.Config, _ Options) (Provisioned, error) {
 	profile, err := n.Render(cfg)
 	if err != nil {
 		return Provisioned{}, err
@@ -223,6 +223,8 @@ func ensureNonoPack(h Host, pack string) (bool, error) {
 	}
 	return true, nil
 }
+
+func (nono) PrepareAgent(Host, *config.Config) error { return nil }
 
 // StartArgv is the command that hands the terminal to the sandboxed agent.
 // --workdir is passed explicitly so a session started from a subdirectory still

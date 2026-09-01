@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -542,8 +543,29 @@ func (c *Config) FileHash() (string, error) {
 	if err != nil {
 		return "", failure.New("cannot read the config to hash it").At(c.Ref()).WithFix("%v", err)
 	}
+	return hashOf(withoutStartApplied(data)), nil
+}
+
+func withoutStartApplied(data []byte) []byte {
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return data
+	}
+	delete(doc, "memory")
+	delete(doc, "zellij")
+	if claude, ok := doc["claude"].(map[string]any); ok {
+		delete(claude, "settings")
+	}
+	stripped, err := json.Marshal(doc)
+	if err != nil {
+		return data
+	}
+	return stripped
+}
+
+func hashOf(data []byte) string {
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // ResolvedEnv merges env_file entries in order, then inline env on top.

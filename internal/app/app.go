@@ -10,6 +10,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/zellij"
 )
 
 type App struct {
@@ -28,6 +29,7 @@ type App struct {
 
 	Attach func(argv []string, stdin io.Reader, stdout, stderr io.Writer) error
 	Host   backend.Host
+	Zellij zellij.Session
 
 	cfgOnce sync.Once
 	cfg     *config.Config
@@ -47,6 +49,7 @@ func New(version, commit, date string) (*App, error) {
 		Out:     os.Stdout,
 		Err:     os.Stderr,
 		Cwd:     cwd,
+		Zellij:  zellij.New(),
 	}, nil
 }
 

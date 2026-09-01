@@ -1137,3 +1137,59 @@ func TestStarterNonoTemplateOffersTheKeysOnlyNonoHonours(t *testing.T) {
 		}
 	}
 }
+
+// hashOfConfig loads a config from its own directory and returns the hash that
+// decides whether a sandbox is stale.
+func hashOfConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", body)
+	cfg, err := Load(dir, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	hash, err := cfg.FileHash()
+	if err != nil {
+		t.Fatalf("FileHash: %v", err)
+	}
+	return hash
+}
+
+// The keys lid applies on every start must not mark a sandbox stale: telling a
+// user to rebuild for a change that needs no rebuild ends the session they are
+// in for nothing.
+func TestFileHashIgnoresTheKeysAppliedOnEveryStart(t *testing.T) {
+	base := "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: api\n"
+	for _, tt := range []struct {
+		what string
+		body string
+	}{
+		{"claude.settings", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-sonnet-5\nmemory: be brief\nzellij:\n  display_name: api\n"},
+		{"memory", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: say more\nzellij:\n  display_name: api\n"},
+		{"zellij.display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: web\n"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if hashOfConfig(t, base) != hashOfConfig(t, tt.body) {
+				t.Errorf("changing %s marked the sandbox stale, but lid applies it on every start", tt.what)
+			}
+		})
+	}
+}
+
+func TestFileHashStillNoticesWhatOnlyARebuildCanApply(t *testing.T) {
+	base := "name: api\npackages:\n  - jq\n"
+	for _, tt := range []struct {
+		what string
+		body string
+	}{
+		{"packages", "name: api\npackages:\n  - jq\n  - ripgrep\n"},
+		{"claude.plugins", "name: api\npackages:\n  - jq\nclaude:\n  plugins:\n    install:\n      - superpowers@claude-plugins-official\n"},
+		{"runtimes", "name: api\npackages:\n  - jq\nruntimes:\n  node: \"24\"\n"},
+	} {
+		t.Run(tt.what, func(t *testing.T) {
+			if hashOfConfig(t, base) == hashOfConfig(t, tt.body) {
+				t.Errorf("changing %s left the sandbox looking current, but only a rebuild applies it", tt.what)
+			}
+		})
+	}
+}

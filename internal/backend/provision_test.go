@@ -98,7 +98,7 @@ func TestProvisionWritesTheProfileWhereNonoCanBeGivenIt(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\nruntimes:\n  node: 22\n")
 	h := &fakeHost{}
 
-	got, err := Get("nono").Provision(h.host(), cfg)
+	got, err := Get("nono").Provision(h.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestProvisionHasNonoValidateTheProfileItWrote(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\n")
 	h := &fakeHost{}
 
-	got, err := Get("nono").Provision(h.host(), cfg)
+	got, err := Get("nono").Provision(h.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -136,12 +136,12 @@ func TestProvisionLeavesAnUnchangedProfileAlone(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\n")
 	b := Get("nono")
 	h := &fakeHost{}
-	if _, err := b.Provision(h.host(), cfg); err != nil {
+	if _, err := b.Provision(h.host(), cfg, Options{}); err != nil {
 		t.Fatalf("first Provision: %v", err)
 	}
 
 	again := &fakeHost{}
-	got, err := b.Provision(again.host(), cfg)
+	got, err := b.Provision(again.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("second Provision: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestProvisionRewritesAProfileLeftBehindByAnOlderConfig(t *testing.T) {
 	}
 	h := &fakeHost{}
 
-	got, err := Get("nono").Provision(h.host(), cfg)
+	got, err := Get("nono").Provision(h.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestProvisionReportsWhatNonoSaidWhenItRejectsTheProfile(t *testing.T) {
 	h := &fakeHost{reject: "Error: unknown group 'node_runtime'\n"}
 
 	f := wantFailure(t, func() error {
-		_, err := Get("nono").Provision(h.host(), cfg)
+		_, err := Get("nono").Provision(h.host(), cfg, Options{})
 		return err
 	}())
 
@@ -255,7 +255,7 @@ func TestEveryAgentNonoSandboxesHasACommandToLaunch(t *testing.T) {
 func TestProvisionNamesTheProfileRelativeToTheProject(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\n")
 
-	got, err := Get("nono").Provision((&fakeHost{}).host(), cfg)
+	got, err := Get("nono").Provision((&fakeHost{}).host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestProvisionInstallsTheAgentsPackOnAMachineWithoutIt(t *testing.T) {
 	h := &fakeHost{}
 	cfg := cfgFor(t, "name: api\nbackend: nono\n")
 
-	got, err := Get("nono").Provision(h.host(), cfg)
+	got, err := Get("nono").Provision(h.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestProvisionInstallsTheAgentsPackOnAMachineWithoutIt(t *testing.T) {
 func TestProvisionLeavesAnAlreadyInstalledPackAlone(t *testing.T) {
 	h := &fakeHost{installed: []string{"nolabs-ai/claude        0.1.0   2026-08-31 19:59"}}
 
-	got, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"))
+	got, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"), Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -373,12 +373,12 @@ func TestProvisionChecksThePackEvenWhenTheProfileIsUnchanged(t *testing.T) {
 	h := &fakeHost{}
 	cfg := cfgFor(t, "name: api\nbackend: nono\n")
 
-	if _, err := Get("nono").Provision(h.host(), cfg); err != nil {
+	if _, err := Get("nono").Provision(h.host(), cfg, Options{}); err != nil {
 		t.Fatalf("first Provision: %v", err)
 	}
 
 	second := &fakeHost{}
-	if _, err := Get("nono").Provision(second.host(), cfg); err != nil {
+	if _, err := Get("nono").Provision(second.host(), cfg, Options{}); err != nil {
 		t.Fatalf("second Provision: %v", err)
 	}
 	if !second.ran("nono", "pull", "nolabs-ai/claude") {
@@ -390,7 +390,7 @@ func TestProvisionExplainsAFailedPackPull(t *testing.T) {
 	h := &fakeHost{reject: "error: pack not found in registry"}
 
 	f := wantFailure(t, func() error {
-		_, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"))
+		_, err := Get("nono").Provision(h.host(), cfgFor(t, "name: api\nbackend: nono\n"), Options{})
 		return err
 	}())
 
@@ -403,7 +403,7 @@ func TestProvisionExplainsAFailedPackPull(t *testing.T) {
 }
 
 func TestProvisionPointsAtAllowCommandsWhenADeclaredRuntimeCannotInstall(t *testing.T) {
-	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n"))
+	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n"), Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestProvisionPointsAtAllowCommandsWhenADeclaredRuntimeCannotInstall(t *test
 }
 
 func TestProvisionStopsPointingAtAllowCommandsOnceTheCommandIsAllowed(t *testing.T) {
-	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\nallow_commands:\n  - npm\n"))
+	got, err := Get("nono").Provision((&fakeHost{}).host(), cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\nallow_commands:\n  - npm\n"), Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestProvisionStopsPointingAtAllowCommandsOnceTheCommandIsAllowed(t *testing
 
 func TestProvisionSaysNothingAboutARuntimeWhosePackageManagerIsNotDenied(t *testing.T) {
 	got, err := Get("nono").Provision((&fakeHost{installed: []string{"nolabs-ai/claude 0.1.0"}}).host(),
-		cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  go: \"1.27\"\n  rust: \"1.90\"\n  bun: \"1.3\"\n"))
+		cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  go: \"1.27\"\n  rust: \"1.90\"\n  bun: \"1.3\"\n"), Options{})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -442,10 +442,10 @@ func TestProvisionRepeatsNoPointerForAProfileItDidNotRewrite(t *testing.T) {
 	h := &fakeHost{installed: []string{"nolabs-ai/claude 0.1.0"}}
 	cfg := cfgFor(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n")
 
-	if _, err := Get("nono").Provision(h.host(), cfg); err != nil {
+	if _, err := Get("nono").Provision(h.host(), cfg, Options{}); err != nil {
 		t.Fatalf("first Provision: %v", err)
 	}
-	got, err := Get("nono").Provision(h.host(), cfg)
+	got, err := Get("nono").Provision(h.host(), cfg, Options{})
 	if err != nil {
 		t.Fatalf("second Provision: %v", err)
 	}

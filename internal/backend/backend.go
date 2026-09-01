@@ -11,14 +11,20 @@ type Backend interface {
 	EnsureAvailable(h Host) error
 	Validate(cfg *config.Config) ([]string, error)
 	Render(cfg *config.Config) (string, error)
-	Provision(h Host, cfg *config.Config) (Provisioned, error)
+	Provision(h Host, cfg *config.Config, opts Options) (Provisioned, error)
+	PrepareAgent(h Host, cfg *config.Config) error
 	StartArgv(cfg *config.Config, profilePath string) ([]string, error)
+}
+
+type Options struct {
+	Rebuild bool
 }
 
 type Provisioned struct {
 	Path    string
 	Ref     string
 	Changed bool
+	Stale   bool
 	Notes   []string
 }
 

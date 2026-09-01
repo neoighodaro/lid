@@ -11,7 +11,7 @@ import (
 )
 
 func newStartCommand(a *app.App) *cobra.Command {
-	var printOnly bool
+	var printOnly, rebuild bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -47,11 +47,13 @@ func newStartCommand(a *app.App) *cobra.Command {
 				return nil
 			}
 
+			a.Zellij.RenameTab(cfg.Zellij.DisplayName)
+
 			if err := b.EnsureAvailable(a.SandboxHost()); err != nil {
 				return err
 			}
 
-			provisioned, err := b.Provision(a.SandboxHost(), cfg)
+			provisioned, err := b.Provision(a.SandboxHost(), cfg, backend.Options{Rebuild: rebuild})
 			if err != nil {
 				return err
 			}
@@ -60,6 +62,14 @@ func newStartCommand(a *app.App) *cobra.Command {
 			}
 			if provisioned.Changed {
 				fmt.Fprintln(a.Err, ui.Err.Info.Render("Wrote "+provisioned.Ref))
+			}
+			if provisioned.Stale {
+				fmt.Fprintln(a.Err, ui.Err.Warn.Render(cfg.Ref()+" has changed since this sandbox was created"))
+				fmt.Fprintln(a.Err, ui.Err.Info.Render("  run 'lid start --rebuild' to rebuild it, which ends the sessions running in it"))
+			}
+
+			if err := b.PrepareAgent(a.SandboxHost(), cfg); err != nil {
+				fmt.Fprintln(a.Err, ui.Err.Warn.Render(err.Error()))
 			}
 
 			argv, err := b.StartArgv(cfg, provisioned.Path)
@@ -71,5 +81,6 @@ func newStartCommand(a *app.App) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the generated sandbox profile instead of starting the agent")
+	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "replace the sandbox before starting, ending any sessions running in it")
 	return cmd
 }
