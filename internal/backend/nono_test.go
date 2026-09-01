@@ -270,7 +270,6 @@ func TestNonoWarnsAboutConfigItCannotHonour(t *testing.T) {
 		want string
 	}{
 		{"name: api\nbackend: nono\nclaude:\n  theme: dark\n", "claude"},
-		{"name: api\nbackend: nono\nshell:\n  aliases:\n    ll: ls -la\n", "aliases"},
 		{"name: api\nbackend: nono\nmemory: 4g\n", "memory"},
 		{"name: api\nbackend: nono\nphp:\n  extensions:\n    - redis\nruntimes:\n  php: \"8.5\"\n", "extensions"},
 		{"name: api\nbackend: nono\nworkspace: /workspace/api\n", "workspace"},

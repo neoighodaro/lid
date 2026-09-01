@@ -5,8 +5,6 @@ import (
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
-	"github.com/neoighodaro/lid/internal/failure"
-	"github.com/neoighodaro/lid/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -23,19 +21,9 @@ func newStartCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
-			b := backend.Get(cfg.Backend)
-			if b == nil {
-				return failure.New("no backend named %q", cfg.Backend).At(cfg.Ref())
-			}
-
-			warnUnverifiedAgent(a, cfg)
-
-			warnings, err := b.Validate(cfg)
+			b, err := resolveBackend(a, cfg)
 			if err != nil {
 				return err
-			}
-			for _, warning := range warnings {
-				fmt.Fprintln(a.Err, ui.Err.Warn.Render(warning))
 			}
 
 			if printOnly {
@@ -49,27 +37,9 @@ func newStartCommand(a *app.App) *cobra.Command {
 
 			a.Zellij.RenameTab(cfg.Zellij.DisplayName)
 
-			if err := b.EnsureAvailable(a.SandboxHost()); err != nil {
-				return err
-			}
-
-			provisioned, err := b.Provision(a.SandboxHost(), cfg, backend.Options{Rebuild: rebuild})
+			provisioned, err := provisionSandbox(a, b, cfg, backend.Options{Rebuild: rebuild})
 			if err != nil {
 				return err
-			}
-			for _, note := range provisioned.Notes {
-				fmt.Fprintln(a.Err, ui.Err.Info.Render(note))
-			}
-			if provisioned.Changed {
-				fmt.Fprintln(a.Err, ui.Err.Info.Render("Wrote "+provisioned.Ref))
-			}
-			if provisioned.Stale {
-				fmt.Fprintln(a.Err, ui.Err.Warn.Render(cfg.Ref()+" has changed since this sandbox was created"))
-				fmt.Fprintln(a.Err, ui.Err.Info.Render("  run 'lid start --rebuild' to rebuild it, which ends the sessions running in it"))
-			}
-
-			if err := b.PrepareAgent(a.SandboxHost(), cfg); err != nil {
-				fmt.Fprintln(a.Err, ui.Err.Warn.Render(err.Error()))
 			}
 
 			argv, err := b.StartArgv(cfg, provisioned.Path)
