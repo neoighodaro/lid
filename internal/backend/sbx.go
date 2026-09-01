@@ -411,7 +411,7 @@ type sbxSandbox struct {
 	Status string `json:"status"`
 }
 
-func (sbx) Status(h Host, cfg *config.Config) (State, error) {
+func (sbx) Status(h Host, cfg *config.Config, opts StatusOptions) (State, error) {
 	out, err := h.output([]string{"sbx", "ls", "--json"})
 	if err != nil {
 		return State{}, failure.New("cannot list the sandboxes on this machine: %s", firstLine(out)).
@@ -431,7 +431,7 @@ func (sbx) Status(h Host, cfg *config.Config) (State, error) {
 		if sandbox.ID != "" {
 			state.Rows = [][2]string{{"id", sandbox.ID}}
 		}
-		if state.Running {
+		if opts.Stale && state.Running {
 			state.Stale = sbxIsStale(h, cfg)
 		}
 		return state, nil

@@ -637,15 +637,22 @@ type nonoSession struct {
 	Profile string `json:"profile"`
 }
 
-func (n nono) Status(h Host, cfg *config.Config) (State, error) {
+func (n nono) Status(h Host, cfg *config.Config, opts StatusOptions) (State, error) {
 	profile, err := os.ReadFile(nonoProfilePath(cfg))
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return State{}, nil
+	}
+	if err != nil {
+		return State{}, failure.New("cannot read the profile lid wrote for %s: %s", cfg.Name, err).
+			At(nonoProfileRef(cfg)).
+			WithFix("check who can read that file, then run 'lid start --rebuild' to write it again")
 	}
 
 	state := State{Exists: true, Rows: [][2]string{{"profile", nonoProfileRef(cfg)}}}
-	if rendered, err := n.Render(cfg); err == nil {
-		state.Stale = string(profile) != rendered
+	if opts.Stale {
+		if rendered, err := n.Render(cfg); err == nil {
+			state.Stale = string(profile) != rendered
+		}
 	}
 
 	sessions, err := nonoSessions(h, cfg)

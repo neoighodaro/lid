@@ -13,11 +13,10 @@ const (
 )
 
 type boardMessage struct {
-	From    string
-	Body    string
-	At      string
-	Asked   bool
-	Clipped bool
+	From  string
+	Body  string
+	At    string
+	Asked bool
 }
 
 type boardThread struct {
@@ -91,16 +90,15 @@ func headerOf(t Thread) boardThread {
 }
 
 func messageOf(m Message, asker string, preview bool) boardMessage {
-	body, clipped := m.Body, false
+	body := m.Body
 	if preview {
-		body, clipped = clip(body, previewChars)
+		body = clip(body, previewChars)
 	}
 	return boardMessage{
-		From:    m.From,
-		Body:    body,
-		At:      clock(m.At, "15:04:05"),
-		Asked:   m.From == asker,
-		Clipped: clipped,
+		From:  m.From,
+		Body:  body,
+		At:    stamp(m.At),
+		Asked: m.From == asker,
 	}
 }
 
@@ -112,12 +110,25 @@ func clock(at, layout string) string {
 	return parsed.Local().Format(layout)
 }
 
-func clip(body string, limit int) (string, bool) {
+func stamp(at string) string {
+	parsed, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return at
+	}
+	local := parsed.Local()
+	now := time.Now()
+	if local.Year() == now.Year() && local.YearDay() == now.YearDay() {
+		return local.Format("15:04:05")
+	}
+	return local.Format("2 Jan · 15:04")
+}
+
+func clip(body string, limit int) string {
 	runes := []rune(body)
 	if len(runes) <= limit {
-		return body, false
+		return body
 	}
-	return strings.TrimRight(string(runes[:limit]), " \t\r\n") + "…", true
+	return strings.TrimRight(string(runes[:limit]), " \t\r\n") + "…"
 }
 
 var boardTemplates = func() *template.Template {

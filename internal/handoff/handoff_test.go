@@ -542,3 +542,45 @@ func TestTheBoardEscapesWhatAnAgentWrote(t *testing.T) {
 		t.Error("a subject an agent chose was rendered as markup, so any agent can script the board")
 	}
 }
+
+func TestTheBoardDatesAMessageThatDidNotArriveToday(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-72 * time.Hour)
+	thread := Thread{
+		ID:        "t1",
+		From:      "web",
+		To:        "api",
+		Subject:   "auth",
+		Status:    StatusOpen,
+		UpdatedAt: now.Format(time.RFC3339Nano),
+		Messages: []Message{
+			{From: "web", Body: "which header?", At: earlier.Format(time.RFC3339Nano)},
+			{From: "api", Body: "Authorization", At: now.Format(time.RFC3339Nano)},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderBoard(&buf, []Thread{thread}); err != nil {
+		t.Fatalf("RenderBoard: %v", err)
+	}
+
+	body := buf.String()
+	if want := earlier.Local().Format("2 Jan"); !strings.Contains(body, want) {
+		t.Errorf("a message from %s carries no date, so it reads as if it arrived this afternoon", want)
+	}
+	if want := now.Local().Format("15:04:05"); !strings.Contains(body, want) {
+		t.Errorf("today's message is not stamped %s, which is the whole point of leaving the date off it", want)
+	}
+}
+
+func TestTheBoardIsNeverServedFromTheBrowserCache(t *testing.T) {
+	store := testStore(t)
+	openThread(t, store)
+
+	for _, path := range []string{"/handoff", "/handoff/thread/" + openThread(t, store).ID} {
+		rec, _ := getHTML(t, NewServer(store), path)
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s sent Cache-Control %q, so a refresh can redraw a board that has moved on", path, got)
+		}
+	}
+}

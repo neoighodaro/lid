@@ -710,7 +710,7 @@ func TestSbxReportsASandboxItCannotFindAsNotCreated(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
 	f := &sbxStatusFake{list: `[{"id": "abc", "name": "other", "status": "running"}]`}
 
-	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -723,7 +723,7 @@ func TestSbxSeparatesAStoppedSandboxFromARunningOne(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
 	f := &sbxStatusFake{list: `[{"id": "abc123", "name": "api", "status": "stopped"}]`}
 
-	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -742,7 +742,7 @@ func TestSbxCallsARunningSandboxStaleWhenTheConfigMovedOn(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nbackend: sbx\npackages: [ripgrep]\n")
 	f := &sbxStatusFake{list: `{"sandboxes": [{"id": "abc", "name": "api", "status": "running"}]}`, hash: "from-an-older-config"}
 
-	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestSbxDoesNotCallASandboxStaleWhenItMatchesTheConfig(t *testing.T) {
 	}
 	f := &sbxStatusFake{list: `[{"id": "abc", "name": "api", "status": "running"}]`, hash: hash}
 
-	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -787,7 +787,39 @@ func TestSbxSaysSoWhenItCannotReadWhatSbxPrinted(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
 	f := &sbxStatusFake{list: "not json at all"}
 
-	if _, err := Get(config.BackendSbx).Status(f.host(), cfg); err == nil {
+	if _, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{Stale: true}); err == nil {
 		t.Fatal("unreadable output was treated as an empty list, so lid would say the sandbox is not created")
+	}
+}
+
+func TestSbxFindsTheSandboxListPastAnEmptyKeyBesideIt(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
+	f := &sbxStatusFake{list: `{"errors": [], "results": [{"id": "abc", "name": "api", "status": "running"}]}`}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Exists {
+		t.Error("an empty key sorted ahead of the sandboxes hid them, so lid reported a running sandbox as not created")
+	}
+}
+
+func TestSbxDoesNotEnterTheSandboxWhenNobodyAskedAboutStaleness(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\npackages: [ripgrep]\n")
+	f := &sbxStatusFake{list: `[{"id": "abc", "name": "api", "status": "running"}]`, hash: "from-an-older-config"}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg, StatusOptions{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Running {
+		t.Fatal("the running sandbox was not found")
+	}
+	if f.ran(sbxConfigHash) {
+		t.Error("'lid stop' paid for a round trip into the sandbox to answer a question it never asks")
+	}
+	if state.Stale {
+		t.Error("staleness was reported without being probed for")
 	}
 }

@@ -22,12 +22,16 @@ type Backend interface {
 	// interactive session needs its init file materialized first, and only the
 	// backend knows whether that lands on this machine or inside a container.
 	ShellArgv(h Host, cfg *config.Config, profilePath string, command []string) ([]string, error)
-	Status(h Host, cfg *config.Config) (State, error)
+	Status(h Host, cfg *config.Config, opts StatusOptions) (State, error)
 	Stop(h Host, cfg *config.Config) error
 }
 
 type Options struct {
 	Rebuild bool
+}
+
+type StatusOptions struct {
+	Stale bool
 }
 
 type State struct {
@@ -103,10 +107,20 @@ func parseList[T any](out, command, key string) ([]T, error) {
 		keys = append(keys, name)
 	}
 	sort.Strings(keys)
+
+	empty := false
 	for _, name := range keys {
-		if err := json.Unmarshal(wrapped[name], &list); err == nil {
-			return list, nil
+		var candidate []T
+		if err := json.Unmarshal(wrapped[name], &candidate); err != nil {
+			continue
 		}
+		if len(candidate) > 0 {
+			return candidate, nil
+		}
+		empty = true
+	}
+	if empty {
+		return nil, nil
 	}
 	return nil, unreadable
 }

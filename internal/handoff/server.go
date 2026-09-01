@@ -42,7 +42,7 @@ func handleBoard(store *Store) http.HandlerFunc {
 			}
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writeHTML(w)
 		_ = RenderBoard(w, active)
 	}
 }
@@ -59,7 +59,7 @@ func handleThreadPage(store *Store) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writeHTML(w)
 		_ = RenderThread(w, *thread)
 	}
 }
@@ -264,6 +264,11 @@ func badBody(err error) string {
 		return "Unknown field " + field + " in the body."
 	}
 	return "Invalid JSON body."
+}
+
+func writeHTML(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

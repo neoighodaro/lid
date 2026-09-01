@@ -22,7 +22,7 @@ func newStatusCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
-			state, err := b.Status(a.SandboxHost(), cfg)
+			state, err := b.Status(a.SandboxHost(), cfg, backend.StatusOptions{Stale: true})
 			if err != nil {
 				return err
 			}

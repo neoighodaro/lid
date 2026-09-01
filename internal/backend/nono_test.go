@@ -657,7 +657,7 @@ func TestNonoReportsNoProfileAsNotCreated(t *testing.T) {
 	cfg := cfgFor(t, "name: api\nbackend: nono\n")
 	f := &nonoStatusFake{sessions: "[]"}
 
-	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	state, err := Get(config.BackendNono).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -672,7 +672,7 @@ func TestNonoReportsNoProfileAsNotCreated(t *testing.T) {
 func TestNonoWithAProfileAndNoSessionsIsStopped(t *testing.T) {
 	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
 
-	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	state, err := Get(config.BackendNono).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -692,7 +692,7 @@ func TestNonoCountsOnlyTheSessionsRunningThisProjectsProfile(t *testing.T) {
 		{"id": "s3", "profile": "/somewhere/else/nono.jsonc"}
 	]}`, nonoProfilePath(cfg), nonoProfilePath(cfg))
 
-	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	state, err := Get(config.BackendNono).Status(f.host(), cfg, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -714,7 +714,7 @@ func TestNonoCallsTheProfileStaleWhenTheConfigMovedOn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, err := Get(config.BackendNono).Status(f.host(), changed)
+	state, err := Get(config.BackendNono).Status(f.host(), changed, StatusOptions{Stale: true})
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
@@ -736,5 +736,42 @@ func TestNonoStopsEverySessionOnTheProfile(t *testing.T) {
 	}
 	if f.ran("nono stop s3") {
 		t.Error("lid stopped a session belonging to another project")
+	}
+}
+
+func TestNonoSaysSoWhenTheProfileIsThereButUnreadable(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+	path := nonoProfilePath(cfg)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Get(config.BackendNono).Status(f.host(), cfg, StatusOptions{Stale: true}); err == nil {
+		t.Fatal("a profile lid could not read was reported as a project that was never started")
+	}
+}
+
+func TestNonoDoesNotRenderTheProfileWhenNobodyAskedAboutStaleness(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+	if err := os.WriteFile(filepath.Join(cfg.ProjectDir, "lid.yaml"), []byte("name: api\nbackend: nono\nnetwork: [api.github.com]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := config.Load(cfg.ProjectDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := Get(config.BackendNono).Status(f.host(), changed, StatusOptions{})
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Exists {
+		t.Fatal("the profile written by Provision was not found")
+	}
+	if state.Stale {
+		t.Error("staleness was reported without being probed for")
 	}
 }
