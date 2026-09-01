@@ -310,6 +310,9 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 			{"handoff", cfg.Handoff.Enabled},
 			{"scripts.on_start", len(cfg.Scripts.OnStart) > 0},
 		}},
+		{"nono has no create step; every start is a fresh host process", []field{
+			{"scripts.on_create", len(cfg.Scripts.OnCreate) > 0},
+		}},
 	} {
 		if set := fieldsSet(group.fields); set != "" {
 			warnings = append(warnings, fmt.Sprintf("ignoring %s: %s", set, group.why))

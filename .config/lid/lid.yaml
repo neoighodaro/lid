@@ -17,6 +17,8 @@ network:
   - docs.docker.com
   - docker.com
   - registry.nono.sh
+handoff:
+  enabled: true
 claude:
   plugins:
     marketplaces:

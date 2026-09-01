@@ -374,6 +374,28 @@ func TestNonoStatesEachReasonOnceInsteadOfPerKey(t *testing.T) {
 	}
 }
 
+func TestNonoSaysItIgnoresOnCreateInsteadOfDroppingItQuietly(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nscripts:\n  on_create:\n    - composer install\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "scripts.on_create") {
+		t.Fatalf("warnings = %v, want one naming scripts.on_create", warnings)
+	}
+}
+
+// on_create has no lifecycle hook on nono at all, while on_start is merely
+// unbuilt, so the two must not be filed under the same reason.
+func TestNonoKeepsOnCreateApartFromOnStart(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nscripts:\n  on_create:\n    - composer install\n  on_start:\n    - echo hi\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %v, want on_create and on_start under separate reasons", warnings)
+	}
+}
+
 func TestNonoWarningCountDoesNotGrowWithTheConfig(t *testing.T) {
 	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nworkspace: /workspace/api\nhandoff:\n  enabled: true\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nscripts:\n  on_start:\n    - echo hi\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
 	if err != nil {
