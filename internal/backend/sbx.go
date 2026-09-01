@@ -404,3 +404,54 @@ func sbxCurrentHash(h Host, cfg *config.Config) (string, error) {
 	}
 	return strings.TrimSpace(out), nil
 }
+
+type sbxSandbox struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+func (sbx) Status(h Host, cfg *config.Config) (State, error) {
+	out, err := h.output([]string{"sbx", "ls", "--json"})
+	if err != nil {
+		return State{}, failure.New("cannot list the sandboxes on this machine: %s", firstLine(out)).
+			WithFix("check that 'sbx ls' runs, then try again")
+	}
+
+	sandboxes, err := parseList[sbxSandbox](out, "sbx ls --json", "sandboxes")
+	if err != nil {
+		return State{}, err
+	}
+
+	for _, sandbox := range sandboxes {
+		if sandbox.Name != cfg.Name {
+			continue
+		}
+		state := State{Exists: true, Running: strings.EqualFold(sandbox.Status, "running")}
+		if sandbox.ID != "" {
+			state.Rows = [][2]string{{"id", sandbox.ID}}
+		}
+		if state.Running {
+			state.Stale = sbxIsStale(h, cfg)
+		}
+		return state, nil
+	}
+	return State{}, nil
+}
+
+func (sbx) Stop(h Host, cfg *config.Config) error {
+	if err := h.exec([]string{"sbx", "stop", cfg.Name}); err != nil {
+		return failure.New("cannot stop the %s sandbox", cfg.Name).
+			WithFix("the output above says why; stop it yourself with 'sbx stop %s'", cfg.Name)
+	}
+	return nil
+}
+
+func sbxIsStale(h Host, cfg *config.Config) bool {
+	want, err := cfg.FileHash()
+	if err != nil {
+		return false
+	}
+	current, err := sbxCurrentHash(h, cfg)
+	return err == nil && current != want
+}

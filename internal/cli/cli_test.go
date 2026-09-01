@@ -1426,3 +1426,191 @@ func TestShellReportsTheCommandsOwnExitCode(t *testing.T) {
 		t.Errorf("err = %v, want the command's own exit code", err)
 	}
 }
+
+type statusHost struct {
+	list   string
+	hash   string
+	probes [][]string
+}
+
+func (h *statusHost) lookPath(name string) (string, error) {
+	return "/usr/local/bin/" + name, nil
+}
+
+func (h *statusHost) output(argv []string) ([]byte, error) {
+	h.probes = append(h.probes, argv)
+	line := strings.Join(argv, " ")
+	switch {
+	case strings.Contains(line, "--version"):
+		return []byte("nono 0.74.0\n"), nil
+	case strings.Contains(line, "sbx ls"), strings.Contains(line, "nono ps"):
+		return []byte(h.list), nil
+	case strings.Contains(line, ".lid-config-hash"):
+		if h.hash == "" {
+			return nil, errors.New("exit status 1")
+		}
+		return []byte(h.hash + "\n"), nil
+	}
+	return nil, nil
+}
+
+func (h *statusHost) exec(argv []string, _, _ io.Writer) error {
+	h.probes = append(h.probes, argv)
+	return nil
+}
+
+func (h *statusHost) ran(fragment string) bool {
+	for _, probe := range h.probes {
+		if strings.Contains(strings.Join(probe, " "), fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func runWithHost(t *testing.T, cwd string, h *statusHost, args ...string) (result, error) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: "v1.2.3",
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     cwd,
+		Host:    backend.Host{LookPath: h.lookPath, Output: h.output, Exec: h.exec},
+	}
+	root := NewRootCommand(a)
+	root.SetArgs(args)
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
+}
+
+func TestStatusNamesTheSandboxItLookedFor(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	got, err := runWithHost(t, dir, h, "status")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	for _, want := range []string{"api", "sbx", "claude-code", "running", "abc123"} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output is missing %q:\n%s", want, got.out)
+		}
+	}
+}
+
+func TestStatusSaysWhatToRunWhenThereIsNoSandboxYet(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: "[]"}
+
+	got, err := runWithHost(t, dir, h, "status")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if !strings.Contains(got.out, "not created") {
+		t.Errorf("output does not say the sandbox is not there:\n%s", got.out)
+	}
+	if !strings.Contains(got.err, "lid start") {
+		t.Errorf("nothing tells the user how to create it:\n%s", got.err)
+	}
+}
+
+func TestStatusWarnsWhenTheConfigMovedOnFromTheSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc", "name": "api", "status": "running"}]`, hash: "from-an-older-config"}
+
+	got, err := runWithHost(t, dir, h, "status")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if !strings.Contains(got.err, "has changed") || !strings.Contains(got.err, "--rebuild") {
+		t.Errorf("stale sandbox is not called out with a way to fix it:\n%s", got.err)
+	}
+}
+
+func TestStatusNeverStartsAnything(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: "[]"}
+
+	if _, err := runWithHost(t, dir, h, "status"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, fragment := range []string{"sbx create", "sbx run", "docker build"} {
+		if h.ran(fragment) {
+			t.Errorf("'lid status' ran %q, so asking about a sandbox would build one", fragment)
+		}
+	}
+}
+
+func TestStopStopsARunningSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc", "name": "api", "status": "running"}]`, hash: "any"}
+
+	got, err := runWithHost(t, dir, h, "stop")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if !h.ran("sbx stop api") {
+		t.Errorf("probes = %v, want 'sbx stop api'", h.probes)
+	}
+	if !strings.Contains(got.out, "Stopped api") {
+		t.Errorf("output does not confirm the stop:\n%s", got.out)
+	}
+}
+
+func TestStopSaysSoRatherThanStoppingASandboxThatIsNotRunning(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc", "name": "api", "status": "stopped"}]`}
+
+	got, err := runWithHost(t, dir, h, "stop")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if h.ran("sbx stop") {
+		t.Error("lid stopped a sandbox that was already stopped")
+	}
+	if !strings.Contains(got.err, "not running") {
+		t.Errorf("nothing says why there was nothing to do:\n%s", got.err)
+	}
+}
+
+func TestStopOnAProjectWithNoSandboxIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: "[]"}
+
+	got, err := runWithHost(t, dir, h, "stop")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if !strings.Contains(got.err, "no api sandbox") {
+		t.Errorf("nothing says there was no sandbox to stop:\n%s", got.err)
+	}
+}
+
+func TestStatusReportsTheNonoProfileAndItsSessions(t *testing.T) {
+	dir := nonoProject(t)
+	h := &statusHost{list: "[]"}
+
+	if _, err := runStart(t, dir, &startHost{}, "start"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	got, err := runWithHost(t, dir, h, "status")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+	if !strings.Contains(got.out, "nono") || !strings.Contains(got.out, "stopped") {
+		t.Errorf("output does not describe the profile lid wrote:\n%s", got.out)
+	}
+	if !strings.Contains(got.out, "nono.jsonc") {
+		t.Errorf("output does not name the profile:\n%s", got.out)
+	}
+}

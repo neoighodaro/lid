@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -24,13 +25,16 @@ func newConfigCommand(a *app.App) *cobra.Command {
 
 			warnUnverifiedAgent(a, cfg)
 
-			rows := configRows(cfg)
-			width := labelWidth(rows)
-			for _, row := range rows {
-				fmt.Fprintf(a.Out, "%s %s\n", ui.Label.Render(fmt.Sprintf("%-*s", width, row[0])), row[1])
-			}
+			printRows(a.Out, configRows(cfg))
 			return nil
 		},
+	}
+}
+
+func printRows(w io.Writer, rows [][2]string) {
+	width := labelWidth(rows)
+	for _, row := range rows {
+		fmt.Fprintf(w, "%s %s\n", ui.Label.Render(fmt.Sprintf("%-*s", width, row[0])), row[1])
 	}
 }
 

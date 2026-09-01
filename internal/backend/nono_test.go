@@ -2,6 +2,8 @@ package backend
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -607,5 +609,132 @@ func TestNonoExtendsTheCodexPack(t *testing.T) {
 
 	if profile["extends"] != "nolabs-ai/codex" {
 		t.Errorf("extends = %v, want the codex pack: reassembling what the pack maintains drifts from it", profile["extends"])
+	}
+}
+
+type nonoStatusFake struct {
+	sessions string
+	calls    [][]string
+}
+
+func (f *nonoStatusFake) host() Host {
+	return Host{
+		LookPath: func(name string) (string, error) { return "/opt/homebrew/bin/" + name, nil },
+		Output: func(argv []string) ([]byte, error) {
+			f.calls = append(f.calls, argv)
+			return []byte(f.sessions), nil
+		},
+		Exec: func(argv []string, stdout, stderr io.Writer) error {
+			f.calls = append(f.calls, argv)
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	}
+}
+
+func (f *nonoStatusFake) ran(fragment string) bool {
+	for _, call := range f.calls {
+		if strings.Contains(strings.Join(call, " "), fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func provisionedNono(t *testing.T, body string) (*config.Config, *nonoStatusFake) {
+	t.Helper()
+	cfg := cfgFor(t, body)
+	f := &nonoStatusFake{sessions: "[]"}
+	if _, err := Get(config.BackendNono).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	f.calls = nil
+	return cfg, f
+}
+
+func TestNonoReportsNoProfileAsNotCreated(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\n")
+	f := &nonoStatusFake{sessions: "[]"}
+
+	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if state.Exists {
+		t.Error("a project that has never been started is reported as created")
+	}
+	if f.ran("nono ps") {
+		t.Error("lid asked nono for sessions before there was a profile to match them against")
+	}
+}
+
+func TestNonoWithAProfileAndNoSessionsIsStopped(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+
+	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Exists || state.Running || state.Stale {
+		t.Fatalf("state = %+v, want a profile that exists, matches the config, and has no sessions", state)
+	}
+	if len(state.Rows) == 0 || !strings.Contains(state.Rows[0][1], "nono.jsonc") {
+		t.Errorf("rows = %v, want the profile lid generated", state.Rows)
+	}
+}
+
+func TestNonoCountsOnlyTheSessionsRunningThisProjectsProfile(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+	f.sessions = fmt.Sprintf(`{"sessions": [
+		{"id": "s1", "profile": %q},
+		{"id": "s2", "profile": %q},
+		{"id": "s3", "profile": "/somewhere/else/nono.jsonc"}
+	]}`, nonoProfilePath(cfg), nonoProfilePath(cfg))
+
+	state, err := Get(config.BackendNono).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Running {
+		t.Fatal("sessions on this profile were not reported as running")
+	}
+	if got := state.Rows[len(state.Rows)-1]; got != [2]string{"sessions", "2"} {
+		t.Errorf("last row = %v, want the two sessions on this profile and not the third", got)
+	}
+}
+
+func TestNonoCallsTheProfileStaleWhenTheConfigMovedOn(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+	if err := os.WriteFile(filepath.Join(cfg.ProjectDir, "lid.yaml"), []byte("name: api\nbackend: nono\nnetwork: [api.github.com]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := config.Load(cfg.ProjectDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := Get(config.BackendNono).Status(f.host(), changed)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Stale {
+		t.Error("a profile written before the config changed is not reported as stale")
+	}
+}
+
+func TestNonoStopsEverySessionOnTheProfile(t *testing.T) {
+	cfg, f := provisionedNono(t, "name: api\nbackend: nono\n")
+	f.sessions = fmt.Sprintf(`[{"id": "s1", "profile": %q}, {"id": "s2", "profile": %q}, {"id": "s3", "profile": "/elsewhere"}]`,
+		nonoProfilePath(cfg), nonoProfilePath(cfg))
+
+	if err := Get(config.BackendNono).Stop(f.host(), cfg); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !f.ran("nono stop s1") || !f.ran("nono stop s2") {
+		t.Errorf("calls = %v, want both sessions on this profile stopped", f.calls)
+	}
+	if f.ran("nono stop s3") {
+		t.Error("lid stopped a session belonging to another project")
 	}
 }

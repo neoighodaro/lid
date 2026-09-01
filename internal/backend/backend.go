@@ -1,9 +1,12 @@
 package backend
 
 import (
+	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 type Backend interface {
@@ -19,10 +22,19 @@ type Backend interface {
 	// interactive session needs its init file materialized first, and only the
 	// backend knows whether that lands on this machine or inside a container.
 	ShellArgv(h Host, cfg *config.Config, profilePath string, command []string) ([]string, error)
+	Status(h Host, cfg *config.Config) (State, error)
+	Stop(h Host, cfg *config.Config) error
 }
 
 type Options struct {
 	Rebuild bool
+}
+
+type State struct {
+	Exists  bool
+	Running bool
+	Stale   bool
+	Rows    [][2]string
 }
 
 type Provisioned struct {
@@ -58,4 +70,43 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func parseList[T any](out, command, key string) ([]T, error) {
+	body := strings.TrimSpace(out)
+	if body == "" {
+		return nil, nil
+	}
+
+	var list []T
+	if err := json.Unmarshal([]byte(body), &list); err == nil {
+		return list, nil
+	}
+
+	unreadable := failure.New("cannot read what '%s' printed: %s", command, firstLine(body)).
+		WithFix("this is a bug in lid, or a version of the tool that has changed its output")
+
+	var wrapped map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &wrapped); err != nil {
+		return nil, unreadable
+	}
+
+	if raw, ok := wrapped[key]; ok {
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, unreadable
+		}
+		return list, nil
+	}
+
+	keys := make([]string, 0, len(wrapped))
+	for name := range wrapped {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		if err := json.Unmarshal(wrapped[name], &list); err == nil {
+			return list, nil
+		}
+	}
+	return nil, unreadable
 }

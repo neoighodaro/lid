@@ -630,3 +630,71 @@ func checkNonoVersion(output string) error {
 	}
 	return nil
 }
+
+type nonoSession struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Profile string `json:"profile"`
+}
+
+func (n nono) Status(h Host, cfg *config.Config) (State, error) {
+	profile, err := os.ReadFile(nonoProfilePath(cfg))
+	if err != nil {
+		return State{}, nil
+	}
+
+	state := State{Exists: true, Rows: [][2]string{{"profile", nonoProfileRef(cfg)}}}
+	if rendered, err := n.Render(cfg); err == nil {
+		state.Stale = string(profile) != rendered
+	}
+
+	sessions, err := nonoSessions(h, cfg)
+	if err != nil {
+		return State{}, err
+	}
+	state.Running = len(sessions) > 0
+	if state.Running {
+		state.Rows = append(state.Rows, [2]string{"sessions", strconv.Itoa(len(sessions))})
+	}
+	return state, nil
+}
+
+func (nono) Stop(h Host, cfg *config.Config) error {
+	sessions, err := nonoSessions(h, cfg)
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		id := session.ID
+		if id == "" {
+			id = session.Name
+		}
+		if err := h.exec([]string{"nono", "stop", id}); err != nil {
+			return failure.New("cannot stop the nono session %s", id).
+				WithFix("the output above says why; stop it yourself with 'nono stop %s'", id)
+		}
+	}
+	return nil
+}
+
+func nonoSessions(h Host, cfg *config.Config) ([]nonoSession, error) {
+	out, err := h.output([]string{"nono", "ps", "--json"})
+	if err != nil {
+		return nil, failure.New("cannot list the sessions nono is running: %s", firstLine(out)).
+			WithFix("check that 'nono ps' runs, then try again")
+	}
+
+	sessions, err := parseList[nonoSession](out, "nono ps --json", "sessions")
+	if err != nil {
+		return nil, err
+	}
+
+	path := nonoProfilePath(cfg)
+	matched := make([]nonoSession, 0, len(sessions))
+	for _, session := range sessions {
+		if session.Profile == path || session.Profile == cfg.Name || session.Name == cfg.Name {
+			matched = append(matched, session)
+		}
+	}
+	return matched, nil
+}

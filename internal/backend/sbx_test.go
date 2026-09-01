@@ -668,3 +668,126 @@ func TestPHPExtensionsWithoutThePHPRuntimeAreCalledOut(t *testing.T) {
 		t.Errorf("warnings = %v, want none: the php runtime installs them", warnings)
 	}
 }
+
+type sbxStatusFake struct {
+	list  string
+	hash  string
+	calls [][]string
+}
+
+func (f *sbxStatusFake) host() Host {
+	return Host{
+		LookPath: func(name string) (string, error) { return "/usr/local/bin/" + name, nil },
+		Output: func(argv []string) ([]byte, error) {
+			f.calls = append(f.calls, argv)
+			if strings.Contains(strings.Join(argv, " "), "sbx ls") {
+				return []byte(f.list), nil
+			}
+			if f.hash == "" {
+				return nil, errors.New("exit status 1")
+			}
+			return []byte(f.hash + "\n"), nil
+		},
+		Exec: func(argv []string, stdout, stderr io.Writer) error {
+			f.calls = append(f.calls, argv)
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	}
+}
+
+func (f *sbxStatusFake) ran(fragment string) bool {
+	for _, call := range f.calls {
+		if strings.Contains(strings.Join(call, " "), fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSbxReportsASandboxItCannotFindAsNotCreated(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
+	f := &sbxStatusFake{list: `[{"id": "abc", "name": "other", "status": "running"}]`}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if state.Exists {
+		t.Error("a sandbox nobody created is reported as existing, so 'lid stop' would try to stop nothing")
+	}
+}
+
+func TestSbxSeparatesAStoppedSandboxFromARunningOne(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
+	f := &sbxStatusFake{list: `[{"id": "abc123", "name": "api", "status": "stopped"}]`}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Exists || state.Running {
+		t.Fatalf("state = %+v, want a sandbox that exists but is not running", state)
+	}
+	if len(state.Rows) == 0 || state.Rows[0][1] != "abc123" {
+		t.Errorf("rows = %v, want the sandbox id sbx reported", state.Rows)
+	}
+	if f.ran(sbxConfigHash) {
+		t.Error("lid read the config hash out of a stopped sandbox, which cannot answer")
+	}
+}
+
+func TestSbxCallsARunningSandboxStaleWhenTheConfigMovedOn(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\npackages: [ripgrep]\n")
+	f := &sbxStatusFake{list: `{"sandboxes": [{"id": "abc", "name": "api", "status": "running"}]}`, hash: "from-an-older-config"}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !state.Running || !state.Stale {
+		t.Errorf("state = %+v, want a running sandbox whose config has changed", state)
+	}
+}
+
+func TestSbxDoesNotCallASandboxStaleWhenItMatchesTheConfig(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\npackages: [ripgrep]\n")
+	hash, err := cfg.FileHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &sbxStatusFake{list: `[{"id": "abc", "name": "api", "status": "running"}]`, hash: hash}
+
+	state, err := Get(config.BackendSbx).Status(f.host(), cfg)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if state.Stale {
+		t.Error("a sandbox built from this very config is reported as stale, which asks for a pointless rebuild")
+	}
+}
+
+func TestSbxStopLeavesTheSandboxInPlace(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
+	f := &sbxStatusFake{}
+
+	if err := Get(config.BackendSbx).Stop(f.host(), cfg); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !f.ran("sbx stop api") {
+		t.Errorf("calls = %v, want 'sbx stop api'", f.calls)
+	}
+	if f.ran("sbx rm") {
+		t.Error("stop removed the sandbox, so the next start would rebuild it from scratch")
+	}
+}
+
+func TestSbxSaysSoWhenItCannotReadWhatSbxPrinted(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nbackend: sbx\n")
+	f := &sbxStatusFake{list: "not json at all"}
+
+	if _, err := Get(config.BackendSbx).Status(f.host(), cfg); err == nil {
+		t.Fatal("unreadable output was treated as an empty list, so lid would say the sandbox is not created")
+	}
+}
