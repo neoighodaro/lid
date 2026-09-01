@@ -24,12 +24,24 @@ func newConfigCommand(a *app.App) *cobra.Command {
 
 			warnUnverifiedAgent(a, cfg)
 
-			for _, row := range configRows(cfg) {
-				fmt.Fprintf(a.Out, "%s %s\n", ui.Label.Render(fmt.Sprintf("%-9s", row[0])), row[1])
+			rows := configRows(cfg)
+			width := labelWidth(rows)
+			for _, row := range rows {
+				fmt.Fprintf(a.Out, "%s %s\n", ui.Label.Render(fmt.Sprintf("%-*s", width, row[0])), row[1])
 			}
 			return nil
 		},
 	}
+}
+
+func labelWidth(rows [][2]string) int {
+	width := 0
+	for _, row := range rows {
+		if len(row[0]) > width {
+			width = len(row[0])
+		}
+	}
+	return width
 }
 
 func configRows(cfg *config.Config) [][2]string {
@@ -40,21 +52,68 @@ func configRows(cfg *config.Config) [][2]string {
 		{"backend", cfg.Backend},
 	}
 
-	optional := [][2]string{
-		{"image", cfg.BaseImage},
+	for _, row := range [][2]string{
+		{"base_image", cfg.BaseImage},
 		{"template", cfg.Template},
 		{"workspace", cfg.Workspace},
 		{"packages", strings.Join(cfg.Packages, ", ")},
 		{"runtimes", joinRuntimes(cfg.Runtimes)},
+		{"php.extensions", strings.Join(cfg.PHP.Extensions, ", ")},
 		{"ports", joinScalars(cfg.Ports)},
+		{"env", joinScalarKeys(cfg.Env)},
+		{"env_file", strings.Join(cfg.EnvFile, ", ")},
 		{"network", strings.Join(cfg.Network, ", ")},
-	}
-	for _, row := range optional {
+		{"network_profile", cfg.NetworkProfile},
+		{"allow_commands", strings.Join(cfg.AllowCommands, ", ")},
+		{"scripts.on_create", strings.Join(cfg.Scripts.OnCreate, ", ")},
+		{"scripts.on_start", strings.Join(cfg.Scripts.OnStart, ", ")},
+		{"handoff", handoffRow(cfg)},
+		{"bridges", joinBridges(cfg.Bridges)},
+		{"shell.directory", cfg.Shell.Directory},
+		{"shell.aliases", joinKeys(cfg.Shell.Aliases)},
+		{"claude.theme", cfg.Claude.Theme},
+		{"claude.marketplaces", strings.Join(cfg.Claude.Plugins.Marketplaces, ", ")},
+		{"claude.install", strings.Join(cfg.Claude.Plugins.Install, ", ")},
+		{"claude.settings", joinAnyKeys(cfg.Claude.Settings)},
+		{"zellij", cfg.Zellij.DisplayName},
+		{"memory", lineCount(cfg.Memory)},
+	} {
 		if row[1] != "" {
 			rows = append(rows, row)
 		}
 	}
 	return rows
+}
+
+func handoffRow(cfg *config.Config) string {
+	if !cfg.Handoff.Enabled {
+		return ""
+	}
+	return "on, " + cfg.HandoffURL()
+}
+
+func lineCount(memory string) string {
+	memory = strings.TrimSpace(memory)
+	if memory == "" {
+		return ""
+	}
+	lines := len(strings.Split(memory, "\n"))
+	if lines == 1 {
+		return "1 line"
+	}
+	return fmt.Sprintf("%d lines", lines)
+}
+
+func joinBridges(bridges []config.Bridge) string {
+	parts := make([]string, 0, len(bridges))
+	for _, b := range bridges {
+		part := fmt.Sprintf("%s:%d from host %d", b.Name, b.Port, b.HostPort)
+		if b.Env != "" {
+			part += " as " + b.Env
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func joinRuntimes(runtimes map[string]config.Scalar) string {
@@ -77,4 +136,33 @@ func joinScalars(values []config.Scalar) string {
 		parts = append(parts, string(v))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func joinScalarKeys(values map[string]config.Scalar) string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	return sortedJoin(names)
+}
+
+func joinKeys(values map[string]string) string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	return sortedJoin(names)
+}
+
+func joinAnyKeys(values map[string]any) string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	return sortedJoin(names)
+}
+
+func sortedJoin(names []string) string {
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }

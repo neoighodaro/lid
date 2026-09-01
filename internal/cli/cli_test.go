@@ -128,6 +128,98 @@ func TestConfigCommandPrintsResolvedConfig(t *testing.T) {
 	}
 }
 
+// lid config is where you check what lid made of the file, so a key that is
+// read but never shown sends you back to guessing.
+func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "DB_PASSWORD=hunter2\n")
+	write(t, dir, "lid.yaml", strings.Join([]string{
+		"name: demo",
+		"workspace: /workspace",
+		"runtimes:\n  php: \"8.5\"",
+		"php:\n  extensions: [imagick]",
+		"ports: [\"8080:80\"]",
+		"env:\n  API_TOKEN: sk-live-secret",
+		"env_file: [.env]",
+		"network: [api.github.com]",
+		"scripts:\n  on_create: [composer install]\n  on_start: [./warm.sh]",
+		"handoff:\n  enabled: true",
+		"bridges:\n  - name: postgres\n    port: 5432\n    host_port: 15432\n    env: DB_HOST",
+		"shell:\n  directory: /workspace\n  aliases: {g: git}",
+		"claude:\n  theme: dark\n  plugins:\n    marketplaces: [org/market]\n    install: [thing@market]\n  settings:\n    model: claude-opus-5",
+		"zellij:\n  display_name: Demo",
+		"memory: |\n  line one\n  line two",
+		"",
+	}, "\n"))
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr: %s)", err, got.err)
+	}
+	for _, want := range []string{
+		"workspace", "php.extensions", "ports", "env_file", "network",
+		"scripts.on_create", "scripts.on_start", "handoff", "bridges",
+		"shell.directory", "shell.aliases", "claude.theme",
+		"claude.marketplaces", "claude.install", "claude.settings",
+		"zellij", "memory",
+	} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output never mentions %q:\n%s", want, got.out)
+		}
+	}
+}
+
+func TestConfigCommandShowsTheKeysOnlyNonoHas(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: demo\nbackend: nono\nnetwork_profile: developer\nallow_commands: [npm]\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr: %s)", err, got.err)
+	}
+	for _, want := range []string{"network_profile", "developer", "allow_commands", "npm"} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output never mentions %q:\n%s", want, got.out)
+		}
+	}
+}
+
+// Naming the variables is the useful part; printing what they hold would put
+// whatever env_file resolves on the terminal.
+func TestConfigCommandNamesEnvironmentVariablesWithoutTheirValues(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".env", "DB_PASSWORD=hunter2\n")
+	write(t, dir, "lid.yaml", "name: demo\nenv:\n  API_TOKEN: sk-live-secret\nenv_file: [.env]\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr: %s)", err, got.err)
+	}
+	if !strings.Contains(got.out, "API_TOKEN") {
+		t.Errorf("output never names API_TOKEN:\n%s", got.out)
+	}
+	for _, secret := range []string{"sk-live-secret", "hunter2"} {
+		if strings.Contains(got.out, secret) {
+			t.Errorf("output leaks %q:\n%s", secret, got.out)
+		}
+	}
+}
+
+func TestConfigCommandLeavesOutWhatTheFileDoesNotSet(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: demo\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, absent := range []string{"handoff", "bridges", "memory", "shell.", "claude."} {
+		if strings.Contains(got.out, absent) {
+			t.Errorf("output mentions %q for a config that does not set it:\n%s", absent, got.out)
+		}
+	}
+}
+
 func TestConfigCommandWritesNothingToStderr(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "lid.yaml", "name: lid\n")
