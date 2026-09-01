@@ -5,7 +5,9 @@ DATE    ?= $(shell date -u +%Y-%m-%d)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 DIST    := dist
 
-.PHONY: build release mac mac-arm64 mac-amd64 test vet fmt check clean
+.PHONY: build release mac mac-arm64 mac-amd64 assets test vet fmt check clean
+
+PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
 # Builds the ./lid artifact that ~/.local/bin/lid symlinks to. Host only:
 # inside the sandbox this would write a Linux binary the Mac cannot exec.
@@ -35,6 +37,25 @@ mac-amd64: $(DIST)
 
 $(DIST):
 	mkdir -p $(DIST)
+
+# Packs the release assets 'lid update' downloads: one lid-$(VERSION)-<os>-<arch>.tar.gz
+# per platform, plus the checksums.txt it verifies them against.
+assets: $(DIST)
+	@rm -f $(DIST)/lid-$(VERSION)-*.tar.gz $(DIST)/checksums.txt
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		echo "packing $$os/$$arch"; \
+		GOOS=$$os GOARCH=$$arch go build -ldflags "-s -w $(LDFLAGS)" -o $(DIST)/lid . || exit 1; \
+		tar -czf $(DIST)/lid-$(VERSION)-$$os-$$arch.tar.gz -C $(DIST) lid || exit 1; \
+		rm -f $(DIST)/lid; \
+	done
+	@cd $(DIST) && if command -v sha256sum >/dev/null 2>&1; then \
+		sha256sum lid-$(VERSION)-*.tar.gz > checksums.txt; \
+	else \
+		shasum -a 256 lid-$(VERSION)-*.tar.gz > checksums.txt; \
+	fi
+	@echo "release assets in $(DIST):"
+	@ls -1 $(DIST)/lid-$(VERSION)-*.tar.gz $(DIST)/checksums.txt
 
 test:
 	go test ./...

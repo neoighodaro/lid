@@ -13,6 +13,7 @@ import (
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/handoff"
+	"github.com/neoighodaro/lid/internal/update"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
 
@@ -1612,5 +1613,83 @@ func TestStatusReportsTheNonoProfileAndItsSessions(t *testing.T) {
 	}
 	if !strings.Contains(got.out, "nono.jsonc") {
 		t.Errorf("output does not name the profile:\n%s", got.out)
+	}
+}
+
+func runUpdateCommand(t *testing.T, version string, args ...string) (result, error) {
+	t.Helper()
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: version,
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     t.TempDir(),
+	}
+	root := NewRootCommand(a)
+	root.SetArgs(args)
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
+}
+
+func TestUpdateRefusesToInstallOverALidBuiltFromSource(t *testing.T) {
+	for _, version := range []string{"dev", "v1.2.3-4-g8a17b2a-dirty"} {
+		_, err := runUpdateCommand(t, version, "update")
+		if err == nil {
+			t.Fatalf("'lid update' on %s went ahead and would have overwritten the developer's own build", version)
+		}
+		if !strings.Contains(err.Error(), "make build") {
+			t.Errorf("err = %v, want it to say how to update a build from source", err)
+		}
+	}
+}
+
+func TestTheUpdateNoticeStaysQuietWhenNothingIsPending(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	a := &app.App{Version: "v1.2.3", Out: &out, Err: &errBuf}
+
+	printUpdateNotice(a)
+	if errBuf.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing when no newer version is known", errBuf.String())
+	}
+}
+
+func TestTheUpdateNoticeNamesBothVersionsAndTheCommandToRun(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	a := &app.App{Version: "v1.2.3", PendingUpdate: "v1.3.0", Out: &out, Err: &errBuf}
+
+	printUpdateNotice(a)
+	notice := errBuf.String()
+	for _, want := range []string{"v1.3.0", "v1.2.3", "lid update"} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("notice = %q, want it to mention %q", notice, want)
+		}
+	}
+	if out.Len() != 0 {
+		t.Error("the update notice went to stdout, where it would corrupt piped output")
+	}
+}
+
+func TestACommandWritingToAPipeNeverChecksForUpdates(t *testing.T) {
+	if isTTY(&bytes.Buffer{}) {
+		t.Error("a buffer was taken for a terminal, so every test run would reach for the network")
+	}
+
+	file, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if isTTY(file) {
+		t.Error("'lid config > out.txt' was taken for a terminal, so a notice would land in the file")
+	}
+}
+
+func TestHiddenUpdateCheckIsNotOfferedToUsers(t *testing.T) {
+	root := NewRootCommand(&app.App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == update.CheckCommand && !cmd.Hidden {
+			t.Error("the background update worker is listed in 'lid --help' as if it were a command to run")
+		}
 	}
 }

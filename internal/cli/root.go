@@ -3,10 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"time"
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/ui"
+	"github.com/neoighodaro/lid/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +26,10 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		Version:       a.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+	}
+
+	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		noteUpdate(a, cmd.Name())
 	}
 
 	root.SetOut(a.Out)
@@ -45,6 +52,8 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		newStatusCommand(a),
 		newStopCommand(a),
 		newHandoffCommand(a),
+		newUpdateCommand(a),
+		newUpdateCheckCommand(a),
 	)
 
 	return root
@@ -56,7 +65,9 @@ func Execute(version, commit, date string) int {
 		fmt.Fprintln(os.Stderr, ui.RenderError(err))
 		return 1
 	}
-	return exitCode(a, NewRootCommand(a).Execute())
+	code := exitCode(a, NewRootCommand(a).Execute())
+	printUpdateNotice(a)
+	return code
 }
 
 func exitCode(a *app.App, err error) int {
@@ -71,4 +82,42 @@ func exitCode(a *app.App, err error) int {
 
 	fmt.Fprintln(a.Err, ui.RenderError(err))
 	return 1
+}
+
+func isTTY(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func noteUpdate(a *app.App, command string) {
+	if update.Suppressed(os.Getenv, isTTY(a.Out), command) || !update.IsRelease(a.Version) {
+		return
+	}
+
+	path, err := update.StatePath()
+	if err != nil {
+		return
+	}
+
+	state := update.LoadState(path)
+	if update.IsNewer(a.Version, state.LatestVersion) {
+		a.PendingUpdate = state.LatestVersion
+	}
+	if state.Due(time.Now(), update.CheckInterval) {
+		if self, err := os.Executable(); err == nil {
+			_ = update.Spawn(self)
+		}
+	}
+}
+
+func printUpdateNotice(a *app.App) {
+	if a.PendingUpdate == "" {
+		return
+	}
+	fmt.Fprintln(a.Err, ui.Err.Warn.Render("lid "+a.PendingUpdate+" is out; you are on "+a.Version))
+	fmt.Fprintln(a.Err, ui.Err.Info.Render("  run 'lid update' to install it"))
 }

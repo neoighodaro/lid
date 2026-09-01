@@ -25,6 +25,8 @@ type App struct {
 	Cwd        string
 	ConfigPath string
 
+	PendingUpdate string
+
 	Exec func(argv []string, stdout, stderr io.Writer) error
 
 	Attach func(argv []string, stdin io.Reader, stdout, stderr io.Writer) error
