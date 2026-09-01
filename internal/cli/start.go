@@ -25,11 +25,6 @@ func newStartCommand(a *app.App) *cobra.Command {
 
 			b := backend.Get(cfg.Backend)
 			if b == nil {
-				if cfg.BuildsImage() {
-					return failure.New("the %s backend provisions from an image, not a profile", cfg.Backend).
-						At(cfg.Ref()).
-						WithFix("run 'lid build' instead")
-				}
 				return failure.New("no backend named %q", cfg.Backend).At(cfg.Ref())
 			}
 
@@ -52,11 +47,11 @@ func newStartCommand(a *app.App) *cobra.Command {
 				return nil
 			}
 
-			if err := b.EnsureAvailable(a.Host); err != nil {
+			if err := b.EnsureAvailable(a.SandboxHost()); err != nil {
 				return err
 			}
 
-			provisioned, err := b.Provision(a.Host, cfg)
+			provisioned, err := b.Provision(a.SandboxHost(), cfg)
 			if err != nil {
 				return err
 			}

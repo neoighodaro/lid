@@ -286,7 +286,6 @@ func TestNonoRejectsDockerOnlyKeys(t *testing.T) {
 		{"base_image", "base_image: ubuntu:24.04\n"},
 		{"template", "template: my-template\n"},
 		{"packages", "packages:\n  - ripgrep\n"},
-		{"ports", "ports:\n  - 8080\n"},
 	} {
 		err := loadBodyErr(t, "name: lid\nbackend: nono\n"+tc.body)
 		if !strings.Contains(err.Error(), tc.field) {
@@ -1053,7 +1052,7 @@ func TestStarterConfigParsesAndValidatesForEveryBackend(t *testing.T) {
 // The templates duplicate the keys both backends honour, so nothing stops a new
 // key landing in one and being forgotten in the other. This is that stop.
 func TestStarterTemplatesOfferTheKeysBothBackendsHonour(t *testing.T) {
-	shared := []string{"name:", "agent:", "backend:", "runtimes:", "network:", "env:", "env_file:"}
+	shared := []string{"name:", "agent:", "backend:", "runtimes:", "network:", "ports:", "env:", "env_file:"}
 
 	for _, backend := range Backends {
 		body, err := Starter(StarterOptions{Name: "probe", Backend: backend})

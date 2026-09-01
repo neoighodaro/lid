@@ -37,6 +37,11 @@ network: []
   # - "*.npmjs.org"
   # - "api.github.com"
 
+# Ports the sandboxed process may listen on. nono cannot remap one, so a
+# host:sandbox pair listens on the sandbox port as itself.
+ports: []
+  # - 3000
+
 # Commands the sandbox denies by default that this project needs. nono lifts
 # them a group at a time, so allowing one unblocks the rest of its group -
 # 'lid start' prints exactly what each entry widens.

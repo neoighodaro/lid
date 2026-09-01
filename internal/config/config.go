@@ -402,7 +402,6 @@ func (c *Config) validateBackendExclusions() error {
 		{"base_image", c.BaseImage != "", "a nono session is a host process, not a container"},
 		{"template", c.Template != "", "a nono session is a host process, not a container"},
 		{"packages", len(c.Packages) > 0, "install them on your host yourself"},
-		{"ports", len(c.Ports) > 0, "a nono session shares the host network, so ports need no publishing"},
 	} {
 		if conflict.set {
 			return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).WithFix("%s, or switch to the %s backend", conflict.why, BackendSbx)
@@ -449,6 +448,25 @@ func (b Bridge) validate() error {
 			WithFix("ports run from 1 to 65535")
 	}
 	return nil
+}
+
+type Port struct {
+	Host     int
+	Sandbox  int
+	Protocol string
+}
+
+func ParsePort(port string) (Port, error) {
+	if err := validatePort(port); err != nil {
+		return Port{}, err
+	}
+	m := portRe.FindStringSubmatch(port)
+	parsed := Port{Protocol: m[3]}
+	if m[1] != "" {
+		parsed.Host, _ = strconv.Atoi(m[1])
+	}
+	parsed.Sandbox, _ = strconv.Atoi(m[2])
+	return parsed, nil
 }
 
 func validatePort(port string) error {
@@ -506,6 +524,13 @@ func (c *Config) Ref() string {
 
 func (c *Config) KitDir() string {
 	return filepath.Join(c.ProjectDir, ".config", "lid", ".kit")
+}
+
+func (c *Config) SbxAgent() string {
+	if c.Agent == AgentClaudeCode {
+		return "claude"
+	}
+	return c.Agent
 }
 
 func (c *Config) SandboxImageName() string {

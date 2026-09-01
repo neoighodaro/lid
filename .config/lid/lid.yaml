@@ -16,6 +16,7 @@ network:
   - nono.sh
   - docs.docker.com
   - docker.com
+  - registry.nono.sh
 claude:
   plugins:
     marketplaces:

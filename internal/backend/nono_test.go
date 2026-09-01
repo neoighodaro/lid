@@ -134,14 +134,6 @@ func TestNonoProfileGivesTheWorkdirWriteAccess(t *testing.T) {
 	}
 }
 
-func TestNonoProfileIsInteractive(t *testing.T) {
-	profile := profileOf(t, "name: api\nbackend: nono\n")
-
-	if profile["interactive"] != true {
-		t.Errorf("interactive = %v, want true: the agent is attached to a terminal", profile["interactive"])
-	}
-}
-
 func TestNonoProfileCoversThePlatformsTheAgentPackLeavesOut(t *testing.T) {
 	groups := groupsOf(t, "name: api\nbackend: nono\nagent: claude-code\n")
 
@@ -578,5 +570,57 @@ func TestNonoNeverLeavesTheNetworkUnprofiled(t *testing.T) {
 		if profile, _ := network["network_profile"].(string); profile == "" {
 			t.Errorf("agent %s renders no network_profile, which leaves nono blocking nothing", agent)
 		}
+	}
+}
+
+func TestNonoProfileAllowsTheConfiguredPortsToBeListenedOn(t *testing.T) {
+	network := profileOf(t, "name: api\nbackend: nono\nports:\n  - 3000\n  - 5173/tcp\n")["network"].(map[string]any)
+
+	ports, ok := network["listen_port"].([]any)
+	if !ok || len(ports) != 2 || ports[0] != float64(3000) || ports[1] != float64(5173) {
+		t.Errorf("listen_port = %v, want [3000 5173]", network["listen_port"])
+	}
+}
+
+func TestNonoProfileOmitsListenPortWithNoPortsConfigured(t *testing.T) {
+	network := profileOf(t, "name: api\nbackend: nono\n")["network"].(map[string]any)
+
+	if _, ok := network["listen_port"]; ok {
+		t.Errorf("listen_port is present with nothing configured: %v", network)
+	}
+}
+
+func TestNonoWarnsThatItCannotRemapAPort(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nports:\n  - 8080:3000\n"))
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "3000") {
+		t.Errorf("warnings = %v, want one naming the port the sandbox actually gets", warnings)
+	}
+}
+
+func TestNonoRejectsAPortItCannotGrant(t *testing.T) {
+	_, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nports:\n  - 5000/udp\n"))
+
+	if err == nil {
+		t.Fatal("a udp port was accepted, and nono grants TCP listeners only")
+	}
+	if !strings.Contains(err.Error(), "5000") {
+		t.Errorf("error = %q, want it to name the port", err.Error())
+	}
+}
+
+func TestNonoProfileDropsTheDeprecatedInteractiveKey(t *testing.T) {
+	if _, ok := profileOf(t, "name: api\nbackend: nono\n")["interactive"]; ok {
+		t.Error("the profile still sets interactive, which nono parses and ignores")
+	}
+}
+
+func TestNonoExtendsTheCodexPack(t *testing.T) {
+	profile := profileOf(t, "name: api\nbackend: nono\nagent: codex\n")
+
+	if profile["extends"] != "nolabs-ai/codex" {
+		t.Errorf("extends = %v, want the codex pack: reassembling what the pack maintains drifts from it", profile["extends"])
 	}
 }

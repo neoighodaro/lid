@@ -654,16 +654,18 @@ func TestStartPrintWarnsOnStderrNotStdout(t *testing.T) {
 	}
 }
 
-func TestStartPointsAnImageBackendAtBuild(t *testing.T) {
+func TestStartPrintShowsTheImageAndThePlanForSbx(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "lid.yaml", "name: api\n")
 
-	_, err := run(t, dir, "start", "--print")
-	if err == nil {
-		t.Fatal("start --print: want an error for the sbx backend")
+	got, err := run(t, dir, "start", "--print")
+	if err != nil {
+		t.Fatalf("start --print: %v", err)
 	}
-	if !strings.Contains(err.Error(), "lid build") {
-		t.Errorf("error = %v, want it to point at the command that renders an image", err)
+	for _, want := range []string{"FROM ", "sbx create", "sbx run --name api"} {
+		if !strings.Contains(got.out, want) {
+			t.Errorf("output missing %q:\n%s", want, got.out)
+		}
 	}
 }
 
@@ -928,7 +930,7 @@ func TestInitRejectsABackendItDoesNotHave(t *testing.T) {
 
 func TestInitKeepsEachBackendsKeysOutOfTheOthersTemplate(t *testing.T) {
 	for backend, absent := range map[string][]string{
-		config.BackendNono: {"base_image:", "template:", "packages:", "ports:", "workspace:"},
+		config.BackendNono: {"base_image:", "template:", "packages:", "workspace:"},
 		config.BackendSbx:  {"allow_commands:", "network_profile:"},
 	} {
 		dir := t.TempDir()

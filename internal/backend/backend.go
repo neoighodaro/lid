@@ -24,6 +24,7 @@ type Provisioned struct {
 
 var registry = map[string]Backend{
 	config.BackendNono: nono{},
+	config.BackendSbx:  sbx{},
 }
 
 func Get(name string) Backend {

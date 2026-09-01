@@ -50,6 +50,20 @@ func New(version, commit, date string) (*App, error) {
 	}, nil
 }
 
+func (a *App) SandboxHost() backend.Host {
+	h := a.Host
+	if h.Exec == nil {
+		h.Exec = a.Exec
+	}
+	if h.Stdout == nil {
+		h.Stdout = a.Out
+	}
+	if h.Stderr == nil {
+		h.Stderr = a.Err
+	}
+	return h
+}
+
 func (a *App) Config() (*config.Config, error) {
 	a.cfgOnce.Do(func() {
 		a.cfg, a.cfgErr = config.Load(a.Cwd, a.ConfigPath)
