@@ -1052,7 +1052,7 @@ func TestStarterConfigParsesAndValidatesForEveryBackend(t *testing.T) {
 // The templates duplicate the keys both backends honour, so nothing stops a new
 // key landing in one and being forgotten in the other. This is that stop.
 func TestStarterTemplatesOfferTheKeysBothBackendsHonour(t *testing.T) {
-	shared := []string{"name:", "agent:", "backend:", "runtimes:", "network:", "ports:", "env:", "env_file:"}
+	shared := []string{"name:", "agent:", "backend:", "runtimes:", "network:", "ports:", "env:", "env_file:", "shell:"}
 
 	for _, backend := range Backends {
 		body, err := Starter(StarterOptions{Name: "probe", Backend: backend})

@@ -92,11 +92,13 @@ bridges: []
   #   host_port: 5432
   #   env: DB_HOST
 
+# What 'lid shell' opens. A one-off 'lid shell -- <command>' gets the directory
+# below; the aliases are for the interactive shell only.
 shell:
   # Working directory when opening a shell.
   # directory: /home/agent/project
 
-  # Aliases, added alongside the built-in ones.
+  # Aliases, added alongside the ones the image already defines.
   aliases: {}
     # g: git
 

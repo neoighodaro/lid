@@ -1225,3 +1225,85 @@ func TestStoppingABrokerClearsAPidFileForAProcessThatIsGone(t *testing.T) {
 		t.Error("the stale pid file was left behind")
 	}
 }
+
+func TestShellOpensAShellInTheSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "current", settings: "{}"}
+
+	runSbxStart(t, dir, h, "shell")
+
+	if got, want := strings.Join(h.argv, " "), "sbx exec api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
+		t.Errorf("launched %q, want %q", got, want)
+	}
+}
+
+func TestShellRunsAOneOffCommandInTheSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "current", settings: "{}"}
+
+	runSbxStart(t, dir, h, "shell", "--", "npm", "test")
+
+	got := strings.Join(h.argv, " ")
+	if !strings.HasPrefix(got, "sbx exec api -- bash -lc ") {
+		t.Errorf("launched %q, want a one-off command rather than an interactive shell", got)
+	}
+	if !strings.HasSuffix(got, "&& npm test") {
+		t.Errorf("launched %q, want it to run the command it was given", got)
+	}
+}
+
+func TestShellPassesTheCommandsOwnFlagsThrough(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "current", settings: "{}"}
+
+	runSbxStart(t, dir, h, "shell", "--", "ls", "-la")
+
+	if got := strings.Join(h.argv, " "); !strings.HasSuffix(got, "&& ls -la") {
+		t.Errorf("launched %q, want the command's own flags to reach it", got)
+	}
+}
+
+func TestShellCreatesTheSandboxWhenThereIsNoneYet(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{settings: "{}"}
+
+	runSbxStart(t, dir, h, "shell")
+
+	if !h.ran("sbx create") {
+		t.Errorf("the shell was opened against a sandbox nobody created: %v", h.probes)
+	}
+}
+
+func TestShellWritesTheProfileThenOpensANonoShell(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{}
+
+	res, err := runStart(t, dir, h, "shell")
+	if err != nil {
+		t.Fatalf("shell: %v\nstderr: %s", err, res.err)
+	}
+
+	profile := filepath.Join(dir, ".config", "lid", ".kit", "nono.jsonc")
+	if read(t, profile) == "" {
+		t.Fatalf("no profile written to %s", profile)
+	}
+	if got := strings.Join(h.argv, " "); !strings.Contains(got, "nono shell --profile "+profile) {
+		t.Errorf("launched %q, want a nono shell under the profile it wrote", got)
+	}
+}
+
+func TestShellReportsTheCommandsOwnExitCode(t *testing.T) {
+	dir := nonoProject(t)
+	h := &startHost{exit: &app.ExitError{Code: 3}}
+
+	_, err := runStart(t, dir, h, "shell", "--", "false")
+
+	var exit *app.ExitError
+	if !errors.As(err, &exit) || exit.Code != 3 {
+		t.Errorf("err = %v, want the command's own exit code", err)
+	}
+}

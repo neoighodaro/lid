@@ -294,6 +294,41 @@ func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) 
 	return argv, nil
 }
 
+// ShellArgv opens a caged shell on the host. With nothing in the shell: block
+// there is nothing to add to the session, so it hands over 'nono shell' and the
+// user keeps whichever shell they have chosen; a configured shell: block trades
+// that for bash, the only shell lid can hand an init file to.
+func (nono) ShellArgv(_ Host, cfg *config.Config, profilePath string, command []string) ([]string, error) {
+	dir := shellDir(cfg, cfg.ProjectDir)
+
+	if len(command) > 0 {
+		script := fmt.Sprintf("cd %s && %s", shellQuote(dir), shellCommandLine(command))
+		return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "-lc", script), nil
+	}
+
+	if len(cfg.Shell.Aliases) == 0 && cfg.Shell.Directory == "" {
+		return nonoShellArgv(cfg, "shell", profilePath), nil
+	}
+
+	rc := nonoShellRCPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(rc), 0o755); err != nil {
+		return nil, failure.New("cannot create %s: %v", filepath.Dir(rc), err)
+	}
+	if err := os.WriteFile(rc, []byte(shellRC(cfg, dir)), 0o644); err != nil {
+		return nil, failure.New("cannot write the shell's init file: %v", err).
+			WithFix("the shell would start without what the shell: block in %s describes", cfg.Ref())
+	}
+	return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "--rcfile", rc, "-i"), nil
+}
+
+func nonoShellArgv(cfg *config.Config, verb, profilePath string) []string {
+	return []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
+}
+
+func nonoShellRCPath(cfg *config.Config) string {
+	return filepath.Join(cfg.KitDir(), "shellrc")
+}
+
 func nonoProfilePath(cfg *config.Config) string {
 	return filepath.Join(cfg.KitDir(), "nono.jsonc")
 }
@@ -342,7 +377,6 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 	}{
 		{"a nono session runs on your host", []field{
 			{"claude", cfg.Claude.IsSet()},
-			{"shell.aliases", len(cfg.Shell.Aliases) > 0 || cfg.Shell.Directory != ""},
 			{"memory", cfg.Memory != ""},
 			{"php.extensions", len(cfg.PHP.Extensions) > 0},
 			{"workspace", cfg.Workspace != ""},

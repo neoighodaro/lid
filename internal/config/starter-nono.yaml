@@ -67,3 +67,13 @@ env: {}
 env_file: []
   # - .env
   # - .env.sandbox
+
+# What 'lid shell' opens. Set either key and the shell becomes bash, so it can
+# be handed an init file; leave both unset and you keep your own shell.
+shell:
+  # Working directory when opening a shell.
+  # directory: /path/to/project
+
+  # Aliases, added alongside the ones your own shell already defines.
+  aliases: {}
+    # g: git
