@@ -50,6 +50,14 @@ allow_commands: []
   # - pip
   # - brew
 
+# Cross-sandbox questions. Run the broker with 'lid handoff -D', then the agent
+# can ask agents in other sandboxes and answer theirs. A nono session runs in
+# your own home, so lid will not install the agent skill there uninvited - run
+# 'lid handoff --install-skill' once to teach the agent how to use this.
+handoff:
+  enabled: false
+  # url: http://localhost:8787
+
 # Inline environment variables.
 env: {}
   # NODE_ENV: development

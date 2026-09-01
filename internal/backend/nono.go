@@ -2,7 +2,9 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -207,7 +209,49 @@ func (n nono) Provision(h Host, cfg *config.Config, _ Options) (Provisioned, err
 			At(ref).
 			WithFix("this is a bug in lid; run 'nono profile validate %s' for the full report", ref)
 	}
-	return Provisioned{Path: path, Ref: ref, Changed: true, Notes: append(notes, nonoDeniedManagerNotes(cfg)...)}, nil
+	notes = append(notes, nonoDeniedManagerNotes(cfg)...)
+	return Provisioned{Path: path, Ref: ref, Changed: true, Notes: append(notes, handoffSkillNote(cfg)...)}, nil
+}
+
+func nonoCreatedMarker(cfg *config.Config) string {
+	return filepath.Join(cfg.KitDir(), "nono-created")
+}
+
+func (nono) PrepareAgent(h Host, cfg *config.Config) error {
+	return errors.Join(nonoRunOnCreate(h, cfg), nonoRunOnStart(h, cfg))
+}
+
+func nonoRunOnCreate(h Host, cfg *config.Config) error {
+	marker := nonoCreatedMarker(cfg)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	for _, command := range cfg.Scripts.OnCreate {
+		if err := h.exec(nonoScriptArgv(cfg, command)); err != nil {
+			return failure.New("the on_create command %q failed", command).
+				At(cfg.Ref()).
+				WithFix("fix it, or drop it from scripts.on_create; lid will try again on the next start")
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err == nil {
+		_ = os.WriteFile(marker, nil, 0o644)
+	}
+	return nil
+}
+
+func nonoRunOnStart(h Host, cfg *config.Config) error {
+	for _, command := range cfg.Scripts.OnStart {
+		if err := h.exec(nonoScriptArgv(cfg, command)); err != nil {
+			return failure.New("the on_start command %q failed", command).
+				At(cfg.Ref()).
+				WithFix("the output above says why; the agent starts anyway")
+		}
+	}
+	return nil
+}
+
+func nonoScriptArgv(cfg *config.Config, command string) []string {
+	return []string{"bash", "-lc", fmt.Sprintf("cd %q && %s", cfg.ProjectDir, command)}
 }
 
 // ensureNonoPack installs the pack unless the host already has it, and reports
@@ -223,8 +267,6 @@ func ensureNonoPack(h Host, pack string) (bool, error) {
 	}
 	return true, nil
 }
-
-func (nono) PrepareAgent(Host, *config.Config) error { return nil }
 
 // StartArgv is the command that hands the terminal to the sandboxed agent.
 // --workdir is passed explicitly so a session started from a subdirectory still
@@ -306,13 +348,6 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 			{"workspace", cfg.Workspace != ""},
 			{"bridges", len(cfg.Bridges) > 0},
 		}},
-		{"not wired up for nono yet", []field{
-			{"handoff", cfg.Handoff.Enabled},
-			{"scripts.on_start", len(cfg.Scripts.OnStart) > 0},
-		}},
-		{"nono has no create step; every start is a fresh host process", []field{
-			{"scripts.on_create", len(cfg.Scripts.OnCreate) > 0},
-		}},
 	} {
 		if set := fieldsSet(group.fields); set != "" {
 			warnings = append(warnings, fmt.Sprintf("ignoring %s: %s", set, group.why))
@@ -390,6 +425,20 @@ func fieldsSet(fields []field) string {
 	return strings.Join(names, ", ")
 }
 
+func nonoAllowDomains(cfg *config.Config) []string {
+	if !cfg.Handoff.Enabled {
+		return cfg.Network
+	}
+	host := "localhost"
+	if u, err := url.Parse(cfg.HandoffURL()); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	if contains(cfg.Network, host) {
+		return cfg.Network
+	}
+	return append(append([]string{}, cfg.Network...), host)
+}
+
 func (n nono) Render(cfg *config.Config) (string, error) {
 	if _, err := n.Validate(cfg); err != nil {
 		return "", err
@@ -417,11 +466,14 @@ func (n nono) Render(cfg *config.Config) (string, error) {
 		Workdir: nonoWorkdir{Access: "readwrite"},
 		Network: nonoNetwork{
 			NetworkProfile: nonoNetworkProfileFor(cfg),
-			AllowDomain:    cfg.Network,
+			AllowDomain:    nonoAllowDomains(cfg),
 			ListenPort:     nonoListenPorts(cfg),
 		},
 	}
 	profile.Filesystem = nonoFilesystemFor(cfg)
+	for name, value := range handoffEnv(cfg) {
+		env[name] = value
+	}
 	if len(env) > 0 {
 		profile.Environment = &nonoEnvironment{SetVars: env}
 	}

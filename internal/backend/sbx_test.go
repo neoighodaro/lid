@@ -48,6 +48,14 @@ func (f *sbxFake) host() Host {
 	}
 }
 
+func (f *sbxFake) lines() string {
+	var out []string
+	for _, call := range f.calls {
+		out = append(out, strings.Join(call, " "))
+	}
+	return strings.Join(out, "\n")
+}
+
 func (f *sbxFake) ran(fragments ...string) bool {
 	for _, call := range f.calls {
 		line := strings.Join(call, " ")
@@ -296,12 +304,12 @@ func TestSbxDoesNotWarnAboutClaudeSettingsItNowApplies(t *testing.T) {
 }
 
 func TestSbxWarnsAboutTheKeysItDoesNotHonourYet(t *testing.T) {
-	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n"))
+	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nclaude:\n  theme: ./theme.json\n"))
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "handoff") {
-		t.Errorf("warnings = %v, want one naming handoff", warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "claude.theme") {
+		t.Errorf("warnings = %v, want one naming claude.theme", warnings)
 	}
 }
 

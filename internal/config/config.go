@@ -22,10 +22,11 @@ import (
 const AgentClaudeCode = "claude-code"
 
 const (
-	DefaultAgent     = AgentClaudeCode
-	DefaultBackend   = BackendSbx
-	DefaultBaseImage = "docker/sandbox-templates:claude-code-minimal"
-	MaxNameLen       = 63
+	DefaultAgent       = AgentClaudeCode
+	DefaultBackend     = BackendSbx
+	DefaultBaseImage   = "docker/sandbox-templates:claude-code-minimal"
+	DefaultHandoffPort = 8787
+	MaxNameLen         = 63
 )
 
 const (
@@ -363,6 +364,10 @@ func (c *Config) Validate() error {
 			return failure.New("handoff url %q has no host and port", c.Handoff.URL).
 				WithFix("write it as http://host:port")
 		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return failure.New("handoff url %q is not http", c.Handoff.URL).
+				WithFix("write it as http://host:port")
+		}
 	}
 
 	for _, b := range c.Bridges {
@@ -423,6 +428,7 @@ func (c *Config) validateTemplateExclusions() error {
 		{"packages", len(c.Packages) > 0, "install them in your Dockerfile"},
 		{"runtimes", len(c.Runtimes) > 0, "install them in your Dockerfile"},
 		{"bridges", len(c.Bridges) > 0, "a custom template controls its own socat setup and session hooks"},
+		{"scripts.on_start", len(c.Scripts.OnStart) > 0, "lid bakes these into the image's session hook, which a custom template owns"},
 	} {
 		if conflict.set {
 			return failure.New("template and %s cannot both be set", conflict.field).WithFix("%s", conflict.why)
@@ -521,6 +527,29 @@ func (c *Config) Ref() string {
 		return rel
 	}
 	return filepath.Base(c.Path)
+}
+
+func (c *Config) HandoffURL() string {
+	if c.Handoff.URL != "" {
+		return c.Handoff.URL
+	}
+	host := "localhost"
+	if c.BuildsImage() {
+		host = "host.docker.internal"
+	}
+	return fmt.Sprintf("http://%s:%d", host, DefaultHandoffPort)
+}
+
+func (c *Config) HandoffPort() int {
+	u, err := url.Parse(c.HandoffURL())
+	if err != nil {
+		return DefaultHandoffPort
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return DefaultHandoffPort
+	}
+	return port
 }
 
 func (c *Config) KitDir() string {

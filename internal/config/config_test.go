@@ -1193,3 +1193,54 @@ func TestFileHashStillNoticesWhatOnlyARebuildCanApply(t *testing.T) {
 		})
 	}
 }
+
+func TestATemplateAndOnStartCannotBothBeSet(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\ntemplate: my/image:v1\nscripts:\n  on_start:\n    - echo hi\n")
+
+	if !strings.Contains(err.Error(), "on_start") {
+		t.Errorf("error = %q, want it to name on_start: lid bakes it into the image it no longer generates", err.Error())
+	}
+}
+
+func TestHandoffURLDefaultsPerBackend(t *testing.T) {
+	sandbox := loadBody(t, "name: lid\nhandoff:\n  enabled: true\n")
+	if got := sandbox.HandoffURL(); got != "http://host.docker.internal:8787" {
+		t.Errorf("sbx HandoffURL = %q, want the host as a container sees it", got)
+	}
+
+	host := loadBody(t, "name: lid\nbackend: nono\nhandoff:\n  enabled: true\n")
+	if got := host.HandoffURL(); got != "http://localhost:8787" {
+		t.Errorf("nono HandoffURL = %q, want plain localhost", got)
+	}
+}
+
+func TestHandoffPortFollowsTheConfiguredURL(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nhandoff:\n  enabled: true\n  url: http://host.docker.internal:9999\n")
+
+	if got := cfg.HandoffPort(); got != 9999 {
+		t.Errorf("HandoffPort = %d, want 9999", got)
+	}
+}
+
+// The port has to be explicit because the network rule and the broker both read
+// it back out of this URL; the scheme has to be one curl and lid's own broker
+// can both speak.
+func TestAHandoffURLMustBeHTTPWithAPort(t *testing.T) {
+	for _, url := range []string{
+		"host.docker.internal:8787",
+		"http://host.docker.internal",
+		"ftp://host.docker.internal:8787",
+		"ws://host.docker.internal:8787",
+	} {
+		loadBodyErr(t, "name: api\nhandoff:\n  enabled: true\n  url: "+url+"\n")
+	}
+	for _, url := range []string{
+		"http://host.docker.internal:8787",
+		"https://broker.example.com:443",
+	} {
+		cfg := loadBody(t, "name: api\nhandoff:\n  enabled: true\n  url: "+url+"\n")
+		if cfg.HandoffURL() != url {
+			t.Errorf("HandoffURL = %q, want %q", cfg.HandoffURL(), url)
+		}
+	}
+}

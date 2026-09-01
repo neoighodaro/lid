@@ -77,6 +77,21 @@ scripts:
   on_start: []
     # - ./scripts/warm-cache.sh
 
+# Cross-sandbox questions. Run the broker on your host with 'lid handoff -D',
+# then the agent can ask agents in other sandboxes and answer theirs.
+handoff:
+  enabled: false
+  # url: http://host.docker.internal:8787
+
+# Host services reachable inside the sandbox under a stable name and port, so
+# the project's .env needs no sandbox-specific edits. lid opens host_port in the
+# sandbox's network policy and installs socat for you.
+bridges: []
+  # - name: postgres
+  #   port: 5432
+  #   host_port: 5432
+  #   env: DB_HOST
+
 shell:
   # Working directory when opening a shell.
   # directory: /home/agent/project

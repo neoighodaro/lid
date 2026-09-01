@@ -12,6 +12,7 @@ import (
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/handoff"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
 
@@ -1165,5 +1166,62 @@ func TestStartPrintLeavesTheZellijTabAlone(t *testing.T) {
 
 	if h.ran("rename-tab") {
 		t.Errorf("--print renamed a tab it never started an agent in: %v", h.probes)
+	}
+}
+
+// The broker and the sandboxes have to agree on a port. The sandbox reads it out
+// of handoff.url, so the broker has to as well, or the firewall opens a port
+// nothing is listening on.
+func TestTheBrokerTakesItsPortFromTheProjectConfig(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, ".config/lid/lid.yaml", "name: api\nhandoff:\n  enabled: true\n  url: http://host.docker.internal:9123\n")
+
+	a := &app.App{Out: io.Discard, Err: io.Discard, Cwd: dir}
+	if got := brokerPort(a, 0); got != 9123 {
+		t.Errorf("brokerPort = %d, want the port from handoff.url", got)
+	}
+	if got := brokerPort(a, 9999); got != 9999 {
+		t.Errorf("brokerPort with -P = %d, want the flag to win", got)
+	}
+}
+
+func TestTheBrokerRunsOutsideAProjectOnTheDefaultPort(t *testing.T) {
+	a := &app.App{Out: io.Discard, Err: io.Discard, Cwd: t.TempDir()}
+	if got := brokerPort(a, 0); got != config.DefaultHandoffPort {
+		t.Errorf("brokerPort = %d, want %d where there is no config to read", got, config.DefaultHandoffPort)
+	}
+}
+
+// A pid alone is not proof a broker is there. Pids get recycled, and signalling
+// one that now belongs to something else kills a stranger's process.
+func TestStoppingABrokerRefusesToSignalAPidThatDoesNotAnswer(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := writeBrokerFile(os.Getpid(), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	var errBuf bytes.Buffer
+	a := &app.App{Out: io.Discard, Err: &errBuf, Cwd: t.TempDir()}
+	err := killBroker(a)
+	if err == nil {
+		t.Fatal("killBroker: want a refusal when nothing answers as a broker")
+	}
+	if !strings.Contains(err.Error(), "recycled") {
+		t.Errorf("err = %v, want it to say why the pid is not trusted", err)
+	}
+}
+
+func TestStoppingABrokerClearsAPidFileForAProcessThatIsGone(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := writeBrokerFile(999999999, 8787); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app.App{Out: io.Discard, Err: io.Discard, Cwd: t.TempDir()}
+	if err := killBroker(a); err == nil {
+		t.Fatal("killBroker: want it to report no broker running")
+	}
+	if _, err := os.Stat(handoff.DefaultPidPath()); !os.IsNotExist(err) {
+		t.Error("the stale pid file was left behind")
 	}
 }

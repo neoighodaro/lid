@@ -1,0 +1,410 @@
+package handoff
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	return NewStore(filepath.Join(t.TempDir(), "threads.json"))
+}
+
+func do(t *testing.T, h http.Handler, method, path, body string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var decoded map[string]any
+	if bytes.HasPrefix(bytes.TrimSpace(rec.Body.Bytes()), []byte("{")) {
+		if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+			t.Fatalf("decode %s %s: %v (%s)", method, path, err, rec.Body.String())
+		}
+	}
+	return rec, decoded
+}
+
+func openThread(t *testing.T, store *Store) *Thread {
+	t.Helper()
+	thread, err := store.Open("web", "api", "auth", "which header?")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return thread
+}
+
+func TestAThreadStartsWaitingOnWhoWasAsked(t *testing.T) {
+	thread := openThread(t, testStore(t))
+
+	if thread.WaitingOn != "api" {
+		t.Errorf("WaitingOn = %q, want api: the question is theirs to answer", thread.WaitingOn)
+	}
+	if thread.Status != StatusOpen {
+		t.Errorf("Status = %q, want %q", thread.Status, StatusOpen)
+	}
+}
+
+func TestAReplyHandsTheTurnBack(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+
+	updated, err := store.Reply(thread.ID, "api", "the bearer one", "web", false)
+	if err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	if updated.WaitingOn != "web" {
+		t.Errorf("WaitingOn = %q, want web", updated.WaitingOn)
+	}
+	if updated.Status != StatusOpen {
+		t.Errorf("Status = %q, want the thread still open", updated.Status)
+	}
+	if len(updated.Messages) != 2 {
+		t.Errorf("Messages = %d, want 2", len(updated.Messages))
+	}
+}
+
+func TestAnAnsweredThreadIsNobodysTurn(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+
+	updated, err := store.Reply(thread.ID, "api", "the bearer one", "", true)
+	if err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	if updated.Status != StatusAnswered || updated.WaitingOn != "" {
+		t.Errorf("status/waiting_on = %q/%q, want answered and nobody's turn", updated.Status, updated.WaitingOn)
+	}
+}
+
+// A closed thread that still named a party would keep waking that party's
+// long-poll with a thread they can do nothing about.
+func TestClosingAThreadTakesItOffTheWatch(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+
+	if _, err := store.Close(thread.ID); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	waiting, err := store.All(Filter{WaitingOn: "api"})
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(waiting) != 0 {
+		t.Errorf("threads waiting on api = %d, want none once closed", len(waiting))
+	}
+}
+
+func TestTheWatchSeesBothIncomingQuestionsAndRepliesOwed(t *testing.T) {
+	store := testStore(t)
+	asked := openThread(t, store)
+	mine, err := store.Open("api", "web", "schema", "which column?")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := store.Reply(mine.ID, "web", "the created_at one", "api", false); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+
+	waiting, err := store.All(Filter{WaitingOn: "api"})
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(waiting) != 2 {
+		t.Fatalf("threads waiting on api = %d, want the question asked of it and the reply it owes", len(waiting))
+	}
+	ids := map[string]bool{waiting[0].ID: true, waiting[1].ID: true}
+	if !ids[asked.ID] || !ids[mine.ID] {
+		t.Errorf("waiting = %v, want both %s and %s", ids, asked.ID, mine.ID)
+	}
+}
+
+func TestALongPollReturnsAsSoonAsAThreadArrives(t *testing.T) {
+	store := testStore(t)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if _, err := store.Open("web", "api", "auth", "which header?"); err != nil {
+			panic(err)
+		}
+	}()
+
+	start := time.Now()
+	threads, err := store.WaitFor(context.Background(), Filter{WaitingOn: "api"}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("WaitFor: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("threads = %d, want the one that arrived mid-wait", len(threads))
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("waited %s, want a wake on the change rather than the timeout", elapsed)
+	}
+}
+
+func TestALongPollGivesUpAtTheDeadline(t *testing.T) {
+	store := testStore(t)
+
+	start := time.Now()
+	threads, err := store.WaitFor(context.Background(), Filter{WaitingOn: "api"}, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitFor: %v", err)
+	}
+	if len(threads) != 0 {
+		t.Errorf("threads = %d, want none", len(threads))
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("waited %s, want the deadline to end it", elapsed)
+	}
+}
+
+func TestWaitIsCappedSoAConnectionCannotBeParkedForever(t *testing.T) {
+	got, err := waitFor("100000")
+	if err != nil || got != MaxWait {
+		t.Errorf("waitFor(100000) = %s, %v, want it capped at %s", got, err, MaxWait)
+	}
+	if got, err := waitFor("30"); err != nil || got != 30*time.Second {
+		t.Errorf("waitFor(30) = %s, %v, want 30s", got, err)
+	}
+	if _, err := waitFor(""); err != nil {
+		t.Errorf("waitFor(empty) = %v, want no wait and no error", err)
+	}
+}
+
+// The seconds are bare on purpose. Appending "s" to whatever arrived would read
+// a Go-looking duration as the wrong unit and silently cancel the long poll.
+func TestAWaitThatLooksLikeADurationIsRefusedRatherThanMisread(t *testing.T) {
+	for _, raw := range []string{"5m", "nonsense", "-1", "1h"} {
+		if _, err := waitFor(raw); err == nil {
+			t.Errorf("waitFor(%q) was accepted, want it refused", raw)
+		}
+	}
+}
+
+// The store survives a machine that dies mid-write, so a half-written file must
+// never become the live store.
+func TestAnUnreadableStoreIsKeptRatherThanOverwritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "threads.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(path)
+
+	if _, err := store.Open("web", "api", "auth", "which header?"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	kept, _ := filepath.Glob(path + ".corrupt.*")
+	if len(kept) != 1 {
+		t.Errorf("the unreadable file was not kept aside: %v", kept)
+	}
+}
+
+// A second corruption must not erase the evidence of the first.
+func TestEachUnreadableStoreIsKeptSeparately(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "threads.json")
+	store := NewStore(path)
+
+	for i := 0; i < 2; i++ {
+		if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Open("web", "api", "auth", "which header?"); err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+	}
+
+	kept, _ := filepath.Glob(path + ".corrupt.*")
+	if len(kept) != 2 {
+		t.Errorf("kept %d corrupt files, want both", len(kept))
+	}
+}
+
+func TestTheServerOpensAndListsAThread(t *testing.T) {
+	store := testStore(t)
+	h := NewServer(store)
+
+	rec, body := do(t, h, "POST", "/handoff/threads", `{"from":"web","to":"api","subject":"auth","body":"which header?"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /handoff/threads = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	if body["waiting_on"] != "api" {
+		t.Errorf("waiting_on = %v, want api", body["waiting_on"])
+	}
+
+	rec, _ = do(t, h, "GET", "/handoff/threads?waiting_on=api", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /handoff/threads = %d, want 200", rec.Code)
+	}
+	var threads []Thread
+	if err := json.Unmarshal(rec.Body.Bytes(), &threads); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Errorf("threads = %d, want 1", len(threads))
+	}
+}
+
+func TestTheServerRefusesAReplyThatSaysNothingAboutWhoseTurnItIs(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+	h := NewServer(store)
+
+	rec, body := do(t, h, "POST", "/handoff/threads/"+thread.ID+"/messages", `{"from":"api","body":"maybe"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("POST reply = %d, want 422 (%s)", rec.Code, rec.Body.String())
+	}
+	errs, _ := body["errors"].(map[string]any)
+	if _, named := errs["waiting_on"]; !named {
+		t.Errorf("errors = %v, want it to name waiting_on", body["errors"])
+	}
+}
+
+func TestTheServerRefusesAReplyThatClaimsBothOutcomes(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+	h := NewServer(store)
+
+	rec, _ := do(t, h, "POST", "/handoff/threads/"+thread.ID+"/messages",
+		`{"from":"api","body":"done","status":"answered","waiting_on":"web"}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("POST reply = %d, want 422: answered and waiting_on contradict", rec.Code)
+	}
+}
+
+func TestTheServerIsHonestAboutAThreadThatIsNotThere(t *testing.T) {
+	h := NewServer(testStore(t))
+
+	for _, tc := range []struct{ method, path, body string }{
+		{"GET", "/handoff/threads/nope", ""},
+		{"POST", "/handoff/threads/nope/messages", `{"from":"api","body":"hi","waiting_on":"web"}`},
+		{"DELETE", "/handoff/threads/nope", ""},
+	} {
+		rec, _ := do(t, h, tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s = %d, want 404", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+func TestIDsDoNotCollide(t *testing.T) {
+	seen := make(map[string]bool, 1000)
+	for i := 0; i < 1000; i++ {
+		id := NewID()
+		if seen[id] {
+			t.Fatalf("duplicate id %s after %d", id, i)
+		}
+		seen[id] = true
+	}
+}
+
+// Without a cursor a long poll returns instantly for as long as anything is
+// waiting on the watcher, which is the normal state — so the wait never waits.
+func TestACursorMakesTheLongPollActuallyWait(t *testing.T) {
+	store := testStore(t)
+	thread, err := store.Open("web", "api", "auth", "which header?")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	seen, err := time.Parse(timestampLayout, thread.UpdatedAt)
+	if err != nil {
+		t.Fatalf("the stored timestamp is not a cursor: %v", err)
+	}
+
+	start := time.Now()
+	threads, err := store.WaitFor(context.Background(), Filter{WaitingOn: "api", Since: seen}, 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitFor: %v", err)
+	}
+	if len(threads) != 0 {
+		t.Errorf("threads = %d, want the already-seen thread held back", len(threads))
+	}
+	if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
+		t.Errorf("returned after %s, want it to park until the deadline", elapsed)
+	}
+}
+
+func TestACursorStillDeliversTheNextTurn(t *testing.T) {
+	store := testStore(t)
+	thread, err := store.Open("web", "api", "auth", "which header?")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	seen, _ := time.Parse(timestampLayout, thread.UpdatedAt)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_, _ = store.Reply(thread.ID, "api", "which endpoint?", "web", false)
+	}()
+
+	threads, err := store.WaitFor(context.Background(), Filter{WaitingOn: "web", Since: seen}, 2*time.Second)
+	if err != nil {
+		t.Fatalf("WaitFor: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("threads = %d, want the reply to wake the watch", len(threads))
+	}
+}
+
+// Clients pick the newest timestamp in a page by string comparison, so the text
+// order and the time order have to agree. RFC3339Nano trims trailing zeros and
+// they do not.
+func TestTimestampsSortTheSameWayAsStringsAndAsTimes(t *testing.T) {
+	base := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	for _, pair := range [][2]time.Duration{
+		{500 * time.Millisecond, 500*time.Millisecond + time.Microsecond},
+		{0, time.Nanosecond},
+		{999 * time.Millisecond, time.Second},
+	} {
+		earlier := base.Add(pair[0]).Format(timestampLayout)
+		later := base.Add(pair[1]).Format(timestampLayout)
+		if !(earlier < later) {
+			t.Errorf("%s sorts above %s as a string", earlier, later)
+		}
+		if _, err := time.Parse(time.RFC3339Nano, earlier); err != nil {
+			t.Errorf("%s does not parse as RFC 3339: %v", earlier, err)
+		}
+	}
+}
+
+func TestTheServerRefusesACursorItCannotRead(t *testing.T) {
+	server := NewServer(testStore(t))
+	req := httptest.NewRequest(http.MethodGet, "/handoff/threads?since=yesterday", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+}
+
+// A misspelled field would otherwise be dropped and the reply rejected for
+// saying nothing about whose turn it is, sending the caller after a syntax error
+// that is not there.
+func TestAMisspelledFieldSaysWhichFieldItWas(t *testing.T) {
+	store := testStore(t)
+	thread, _ := store.Open("web", "api", "auth", "which header?")
+	server := NewServer(store)
+
+	body := `{"from":"api","body":"the Authorization one","waitingon":"web"}`
+	req := httptest.NewRequest(http.MethodPost, "/handoff/threads/"+thread.ID+"/messages", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "waitingon") {
+		t.Errorf("body = %s, want it to name the field", rec.Body.String())
+	}
+}

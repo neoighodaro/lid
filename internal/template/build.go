@@ -36,6 +36,11 @@ func WriteDockerfile(cfg *config.Config) (string, error) {
 	if err := os.WriteFile(path, []byte(dockerfile), 0o644); err != nil {
 		return "", failure.New("cannot write the Dockerfile").At(path).WithFix("%v", err)
 	}
+
+	bridge := filepath.Join(kitDir, "bridge.sh")
+	if err := os.WriteFile(bridge, []byte(bridgeScript), 0o755); err != nil {
+		return "", failure.New("cannot write the bridge helper").At(bridge).WithFix("%v", err)
+	}
 	return kitDir, nil
 }
 

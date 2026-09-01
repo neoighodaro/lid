@@ -4,3 +4,5 @@
 /lid
 /dist/
 /build/
+
+.claude/worktrees/

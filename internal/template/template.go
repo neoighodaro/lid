@@ -2,6 +2,8 @@ package template
 
 import (
 	"embed"
+	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -13,16 +15,52 @@ import (
 
 //go:embed Dockerfile.tmpl
 var templateFS embed.FS
+
+//go:embed bridge.sh
+var bridgeScript string
 var dockerfileTmpl = template.Must(template.ParseFS(templateFS, "Dockerfile.tmpl"))
 
 type data struct {
-	BaseImage   string
-	Packages    []string
-	RootBlocks  []string
-	AgentBlocks []string
-	EnvBlocks   []string
-	Claude      bool
-	Plugins     config.ClaudePlugins
+	BaseImage        string
+	Packages         []string
+	RootBlocks       []string
+	AgentBlocks      []string
+	EnvBlocks        []string
+	Claude           bool
+	Plugins          config.ClaudePlugins
+	Bridges          bool
+	BridgeScriptPath string
+	SessionHook      []string
+}
+
+const BridgeScriptPath = "/usr/local/bin/lid-bridge"
+
+func sessionHookLines(cfg *config.Config) []string {
+	if len(cfg.Bridges) == 0 && len(cfg.Scripts.OnStart) == 0 {
+		return nil
+	}
+
+	workDir := cfg.ProjectDir
+	if cfg.Workspace != "" {
+		workDir = cfg.Workspace
+	}
+
+	lines := []string{`if [ -z "${LID_ON_START:-}" ]; then export LID_ON_START=1`}
+	for _, b := range cfg.Bridges {
+		args := fmt.Sprintf("%s %d %d", b.Name, b.Port, b.HostPort)
+		if b.Env != "" {
+			args += " " + b.Env
+		}
+		lines = append(lines, fmt.Sprintf("%s %s >/dev/null 2>&1 || true", BridgeScriptPath, args))
+	}
+	for _, command := range cfg.Scripts.OnStart {
+		lines = append(lines, fmt.Sprintf("( cd %s && %s ) >/dev/null 2>&1 || true", shellQuote(workDir), command))
+	}
+	return append(lines, "fi")
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func Render(cfg *config.Config) (string, error) {
@@ -44,6 +82,14 @@ func Render(cfg *config.Config) (string, error) {
 	}
 	if d.Claude {
 		d.Plugins = cfg.Claude.Plugins
+	}
+	d.Bridges = len(cfg.Bridges) > 0
+	if d.Bridges && !slices.Contains(d.Packages, "socat") {
+		d.Packages = append(append([]string{}, d.Packages...), "socat")
+	}
+	d.BridgeScriptPath = BridgeScriptPath
+	for _, line := range sessionHookLines(cfg) {
+		d.SessionHook = append(d.SessionHook, shellQuote(line))
 	}
 
 	opts := runtime.Options{PHPExtensions: cfg.PHP.Extensions}

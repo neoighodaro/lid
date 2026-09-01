@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -334,5 +335,238 @@ func TestRenderNamesTheConfigWhenARuntimeVersionIsWrong(t *testing.T) {
 	}
 	if f.In == "" {
 		t.Errorf("the error does not say which file to edit: %+v", f)
+	}
+}
+
+// hookScript pulls the generated session-hook RUN out of the Dockerfile and
+// turns it back into the shell line docker would execute, so the tests can run
+// the real emitted text rather than a reconstruction of it.
+func hookScript(t *testing.T, dockerfile string) string {
+	t.Helper()
+	start := strings.Index(dockerfile, "RUN printf")
+	if start < 0 {
+		t.Fatalf("no session hook in:\n%s", dockerfile)
+	}
+	body := dockerfile[start+len("RUN "):]
+	if end := strings.Index(body, "\nUSER "); end >= 0 {
+		body = body[:end]
+	}
+	return strings.ReplaceAll(body, "\\\n", " ")
+}
+
+// hookContents runs the generated RUN and returns what it appended, which is
+// what the sandbox actually sources — the Dockerfile text is quoted for printf,
+// so asserting against it would be asserting against the wrong layer.
+func hookContents(t *testing.T, dockerfile string) string {
+	t.Helper()
+	hook := filepath.Join(t.TempDir(), "sandbox-persistent.sh")
+	script := strings.Replace(hookScript(t, dockerfile), ">> /etc/sandbox-persistent.sh", ">> "+hook, 1)
+	if out, err := exec.Command("bash", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("the generated hook is not valid shell: %v\n%s\nscript:\n%s", err, out, script)
+	}
+	body, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestABridgeIsCopiedInAndBroughtUpEverySession(t *testing.T) {
+	out, err := Render(cfgFor(t, "name: api\nbridges:\n  - name: db\n    port: 5432\n    host_port: 15432\n    env: DB_HOST\n"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(out, "COPY bridge.sh "+BridgeScriptPath) {
+		t.Errorf("the bridge helper is not copied into the image:\n%s", out)
+	}
+	if !strings.Contains(hookContents(t, out), BridgeScriptPath+" db 5432 15432 DB_HOST") {
+		t.Errorf("the bridge is not brought up with its config:\n%s", out)
+	}
+}
+
+func TestAnOnStartCommandRunsInTheProjectDirectory(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nscripts:\n  on_start:\n    - php artisan serve\n")
+	out, err := Render(cfg)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(hookContents(t, out), "cd '"+cfg.ProjectDir+"' && php artisan serve") {
+		t.Errorf("on_start does not run in the project:\n%s", out)
+	}
+}
+
+func TestAWorkspaceIsWhereOnStartRuns(t *testing.T) {
+	out, err := Render(cfgFor(t, "name: api\nworkspace: /workspace/api\nscripts:\n  on_start:\n    - pwd\n"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(hookContents(t, out), "cd '/workspace/api' && pwd") {
+		t.Errorf("on_start ignores the workspace it was linked into:\n%s", out)
+	}
+}
+
+func TestNoSessionHookWithoutSomethingToRun(t *testing.T) {
+	out, err := Render(cfgFor(t, "name: api\n"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if strings.Contains(out, "sandbox-persistent.sh") {
+		t.Errorf("an empty session hook was written anyway:\n%s", out)
+	}
+	if strings.Contains(out, "COPY bridge.sh") {
+		t.Errorf("the bridge helper was copied in with no bridges configured:\n%s", out)
+	}
+}
+
+// The emitted RUN is a printf whose arguments are single-quoted shell. A
+// command carrying a quote of its own has to survive that intact.
+func TestTheGeneratedHookIsWhatARealShellWrites(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nscripts:\n  on_start:\n    - echo 'it worked'\n")
+	out, err := Render(cfg)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	written := hookContents(t, out)
+	if !strings.Contains(written, `echo 'it worked'`) {
+		t.Errorf("the quoted command did not survive:\n%s", written)
+	}
+	if !strings.Contains(written, "export LID_ON_START=1") {
+		t.Errorf("the guard is missing:\n%s", written)
+	}
+}
+
+// The hook is sourced by every non-interactive bash. Without the guard, an
+// on_start command that itself runs bash would re-source it and recurse until
+// the sandbox dies.
+func TestTheHookRefusesToRunItselfAgainInAChildShell(t *testing.T) {
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "runs")
+	cfg := cfgFor(t, "name: api\nscripts:\n  on_start:\n    - bash -c 'true'\n")
+	out, err := Render(cfg)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	hook := filepath.Join(dir, "hook.sh")
+	build := strings.Replace(hookScript(t, out), ">> /etc/sandbox-persistent.sh", ">> "+hook, 1)
+	if output, err := exec.Command("bash", "-c", build).CombinedOutput(); err != nil {
+		t.Fatalf("cannot write the hook: %v\n%s", err, output)
+	}
+	// Count every time the block runs, then source it the way BASH_ENV does.
+	body, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := strings.Replace(string(body), "export LID_ON_START=1", "export LID_ON_START=1; echo x >> "+counter, 1)
+	if err := os.WriteFile(hook, []byte(counted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash", "-c", ". "+hook)
+	cmd.Env = append(os.Environ(), "BASH_ENV="+hook)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sourcing the hook failed: %v\n%s", err, output)
+	}
+
+	runs, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatalf("the block never ran: %v", err)
+	}
+	if got := strings.Count(string(runs), "x"); got != 1 {
+		t.Errorf("the block ran %d times, want once: the guard did not hold", got)
+	}
+}
+
+func TestABridgeBringsSocatWithIt(t *testing.T) {
+	out, err := Render(cfgFor(t, "name: api\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\n"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if !strings.Contains(out, "socat") {
+		t.Errorf("a bridge was configured but socat is not installed:\n%s", out)
+	}
+}
+
+func TestSocatIsNotInstalledTwiceWhenItWasAskedFor(t *testing.T) {
+	out, err := Render(cfgFor(t, "name: api\npackages:\n  - socat\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\n"))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	if strings.Count(out, "socat") != 1 {
+		t.Errorf("socat appears %d times, want once:\n%s", strings.Count(out, "socat"), out)
+	}
+}
+
+// bridgeHarness runs the real bridge script against stubbed system tools, with a
+// fixed process list standing in for what is already running.
+func bridgeHarness(t *testing.T, procs string, args ...string) (started string, log string) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("pgrep", "#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_PROCS\" | grep -qE \"$2\"\n")
+	write("socat", "#!/usr/bin/env bash\necho \"$@\" >> \"$SOCAT_LOG\"\n")
+	write("setsid", "#!/usr/bin/env bash\n[ \"$1\" = -f ] && shift\nexec \"$@\"\n")
+	write("sudo", "#!/usr/bin/env bash\nexec \"$@\"\n")
+
+	script := filepath.Join(dir, "bridge.sh")
+	if err := os.WriteFile(script, []byte(bridgeScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	socatLog := filepath.Join(dir, "socat.log")
+	bridgeLog := filepath.Join(dir, "bridge.log")
+	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"FAKE_PROCS="+procs,
+		"SOCAT_LOG="+socatLog,
+		"LID_HOSTS_FILE="+filepath.Join(dir, "hosts"),
+		"CLAUDE_ENV_FILE="+filepath.Join(dir, "env.sh"),
+		"LID_BRIDGE_LOG="+bridgeLog,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bridge.sh: %v\n%s", err, out)
+	}
+	body, _ := os.ReadFile(socatLog)
+	logged, _ := os.ReadFile(bridgeLog)
+	return string(body), string(logged)
+}
+
+// A listener on 33060 must not pass for one on 3306. Without the comma the
+// liveness check matches on the prefix, and the shorter bridge is reported up
+// while nothing is listening for it.
+func TestABridgeIsNotConfusedByALongerPortThatStartsWithItsOwn(t *testing.T) {
+	started, log := bridgeHarness(t,
+		"socat TCP-LISTEN:33060,bind=127.0.0.1,reuseaddr,fork TCP:host.docker.internal:13306",
+		"db", "3306", "13306")
+
+	if !strings.Contains(started, "TCP-LISTEN:3306,") {
+		t.Errorf("the bridge was not started; the 33060 listener was taken for it\nlog:\n%s", log)
+	}
+}
+
+func TestABridgeThatIsAlreadyUpIsLeftAlone(t *testing.T) {
+	started, log := bridgeHarness(t,
+		"socat TCP-LISTEN:3306,bind=127.0.0.1,reuseaddr,fork TCP:host.docker.internal:13306",
+		"db", "3306", "13306")
+
+	if started != "" {
+		t.Errorf("a second socat was started for a bridge already up: %s\nlog:\n%s", started, log)
 	}
 }

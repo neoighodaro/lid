@@ -274,9 +274,7 @@ func TestNonoWarnsAboutConfigItCannotHonour(t *testing.T) {
 		{"name: api\nbackend: nono\nmemory: 4g\n", "memory"},
 		{"name: api\nbackend: nono\nphp:\n  extensions:\n    - redis\nruntimes:\n  php: \"8.5\"\n", "extensions"},
 		{"name: api\nbackend: nono\nworkspace: /workspace/api\n", "workspace"},
-		{"name: api\nbackend: nono\nhandoff:\n  enabled: true\n", "handoff"},
 		{"name: api\nbackend: nono\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\n", "bridges"},
-		{"name: api\nbackend: nono\nscripts:\n  on_start:\n    - echo hi\n", "on_start"},
 	} {
 		warnings, err := Get(config.BackendNono).Validate(cfgFor(t, tc.body))
 		if err != nil {
@@ -345,7 +343,7 @@ func TestNonoVersionCheckExplainsUnreadableOutput(t *testing.T) {
 }
 
 func TestNonoWarningsReadAsSentences(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: be brief\nworkspace: /workspace/api\nhandoff:\n  enabled: true\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nscripts:\n  on_start:\n    - echo hi\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: be brief\nworkspace: /workspace/api\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,30 +372,8 @@ func TestNonoStatesEachReasonOnceInsteadOfPerKey(t *testing.T) {
 	}
 }
 
-func TestNonoSaysItIgnoresOnCreateInsteadOfDroppingItQuietly(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nscripts:\n  on_create:\n    - composer install\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "scripts.on_create") {
-		t.Fatalf("warnings = %v, want one naming scripts.on_create", warnings)
-	}
-}
-
-// on_create has no lifecycle hook on nono at all, while on_start is merely
-// unbuilt, so the two must not be filed under the same reason.
-func TestNonoKeepsOnCreateApartFromOnStart(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nscripts:\n  on_create:\n    - composer install\n  on_start:\n    - echo hi\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warnings) != 2 {
-		t.Fatalf("warnings = %v, want on_create and on_start under separate reasons", warnings)
-	}
-}
-
 func TestNonoWarningCountDoesNotGrowWithTheConfig(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nworkspace: /workspace/api\nhandoff:\n  enabled: true\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nscripts:\n  on_start:\n    - echo hi\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nworkspace: /workspace/api\nclaude:\n  theme: dark\nshell:\n  aliases:\n    ll: ls -la\nbridges:\n  - name: db\n    port: 5432\n    host_port: 5432\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - redis\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,18 +382,6 @@ func TestNonoWarningCountDoesNotGrowWithTheConfig(t *testing.T) {
 	}
 }
 
-func TestNonoSeparatesWhatItCannotHonourFromWhatIsNotWiredUp(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nhandoff:\n  enabled: true\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warnings) != 2 {
-		t.Fatalf("warnings = %v, want the host-nature key and the unwired one kept apart", warnings)
-	}
-}
-
-// excludesOf reads the groups the profile subtracts, which is empty when the
-// config allows no command nono denies by default.
 func excludesOf(t *testing.T, body string) []string {
 	t.Helper()
 	profile := profileOf(t, body)

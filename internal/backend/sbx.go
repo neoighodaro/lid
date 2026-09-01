@@ -38,9 +38,6 @@ func (sbx) Validate(cfg *config.Config) ([]string, error) {
 		{"claude.theme", cfg.Claude.Theme != ""},
 		{"shell.aliases", len(cfg.Shell.Aliases) > 0 || cfg.Shell.Directory != ""},
 		{"memory", cfg.Memory != "" && !config.IsClaudeAgent(cfg.Agent)},
-		{"handoff", cfg.Handoff.Enabled},
-		{"bridges", len(cfg.Bridges) > 0},
-		{"scripts.on_start", len(cfg.Scripts.OnStart) > 0},
 	})
 	if set == "" {
 		return nil, nil
@@ -109,6 +106,9 @@ func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
 	if err := sbxApplySettings(h, cfg); err != nil {
 		return err
 	}
+	if err := sbxApplyHandoffSkill(h, cfg); err != nil {
+		return err
+	}
 	return sbxApplyMemory(h, cfg)
 }
 
@@ -149,6 +149,21 @@ func sbxApplyMemory(h Host, cfg *config.Config) error {
 	return nil
 }
 
+func sbxApplyHandoffSkill(h Host, cfg *config.Config) error {
+	if !cfg.Handoff.Enabled {
+		return nil
+	}
+	return sbxWriteHandoffSkill(h, cfg)
+}
+
+func sbxWriteHandoffSkill(h Host, cfg *config.Config) error {
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, handoffSkillFile, handoffSkill)); err != nil {
+		return failure.New("cannot write the handoff skill in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix("the agent would not know how to reach the broker %s enables", cfg.Ref())
+	}
+	return nil
+}
+
 func (s sbx) StartArgv(cfg *config.Config, _ string) ([]string, error) {
 	return s.startArgv(cfg), nil
 }
@@ -181,8 +196,8 @@ func sbxSteps(cfg *config.Config) [][]string {
 
 	steps = append(steps, sbxCreateArgv(cfg))
 
-	if len(cfg.Network) > 0 {
-		steps = append(steps, []string{"sbx", "policy", "allow", "network", "--sandbox", cfg.Name, strings.Join(cfg.Network, ",")})
+	if allow := sbxNetworkAllow(cfg); len(allow) > 0 {
+		steps = append(steps, []string{"sbx", "policy", "allow", "network", "--sandbox", cfg.Name, strings.Join(allow, ",")})
 	}
 
 	if cfg.Workspace != "" {
@@ -227,19 +242,42 @@ CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PLUGIN_DATA=%q node "$hook" || true
 	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", script}
 }
 
+func sbxNetworkAllow(cfg *config.Config) []string {
+	var allow []string
+	add := func(entry string) {
+		if entry != "" && !contains(allow, entry) {
+			allow = append(allow, entry)
+		}
+	}
+	for _, domain := range cfg.Network {
+		add(domain)
+	}
+	if cfg.Handoff.Enabled {
+		add(handoffResource(cfg))
+	}
+	for _, b := range cfg.Bridges {
+		add(fmt.Sprintf("localhost:%d", b.HostPort))
+	}
+	return allow
+}
+
 func sbxCreateArgv(cfg *config.Config) []string {
 	argv := []string{"sbx", "create", "--template", sbxImage(cfg), "--name", cfg.Name}
 
 	env, err := cfg.ResolvedEnv()
-	if err == nil {
-		names := make([]string, 0, len(env))
-		for name := range env {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			argv = append(argv, "-e", name+"="+env[name])
-		}
+	if err != nil {
+		env = map[string]string{}
+	}
+	for name, value := range handoffEnv(cfg) {
+		env[name] = value
+	}
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		argv = append(argv, "-e", name+"="+env[name])
 	}
 
 	for _, port := range cfg.Ports {

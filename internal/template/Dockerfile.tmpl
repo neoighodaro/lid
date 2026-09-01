@@ -41,3 +41,20 @@ RUN claude plugin install {{ . }}
 
 {{ . }}
 {{- end }}
+{{- if .Bridges }}
+
+USER root
+COPY bridge.sh {{ .BridgeScriptPath }}
+RUN chmod +x {{ .BridgeScriptPath }}
+USER agent
+{{- end }}
+{{- if .SessionHook }}
+
+USER root
+RUN printf '%s\n' \
+{{- range .SessionHook }}
+      {{ . }} \
+{{- end }}
+    >> /etc/sandbox-persistent.sh
+USER agent
+{{- end }}
