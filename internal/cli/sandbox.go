@@ -8,6 +8,7 @@ import (
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/failure"
 	"github.com/neoighodaro/lid/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 // resolveBackend picks the backend the config names and reports everything it
@@ -32,8 +33,10 @@ func resolveBackend(a *app.App, cfg *config.Config) (backend.Backend, error) {
 
 // provisionSandbox brings the sandbox up and configures the agent in it. Both
 // 'lid start' and 'lid shell' go through here, so a shell opened from cold gets
-// the same sandbox the agent would have been handed.
-func provisionSandbox(a *app.App, b backend.Backend, cfg *config.Config, opts backend.Options) (backend.Provisioned, error) {
+// the same sandbox the agent would have been handed. cmd is the command doing
+// the asking, so the stale-config hint names the flag the user can actually
+// reach from where they are.
+func provisionSandbox(cmd *cobra.Command, a *app.App, b backend.Backend, cfg *config.Config, opts backend.Options) (backend.Provisioned, error) {
 	if err := b.EnsureAvailable(a.SandboxHost()); err != nil {
 		return backend.Provisioned{}, err
 	}
@@ -50,7 +53,7 @@ func provisionSandbox(a *app.App, b backend.Backend, cfg *config.Config, opts ba
 	}
 	if provisioned.Stale {
 		fmt.Fprintln(a.Err, ui.Err.Warn.Render(cfg.Ref()+" has changed since this sandbox was created"))
-		fmt.Fprintln(a.Err, ui.Err.Info.Render("  run 'lid start --rebuild' to rebuild it, which ends the sessions running in it"))
+		fmt.Fprintln(a.Err, ui.Err.Info.Render(fmt.Sprintf("  run '%s --rebuild' to rebuild it, which ends the sessions running in it", cmd.CommandPath())))
 	}
 
 	if err := b.PrepareAgent(a.SandboxHost(), cfg); err != nil {

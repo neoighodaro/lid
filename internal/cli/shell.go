@@ -7,6 +7,8 @@ import (
 )
 
 func newShellCommand(a *app.App) *cobra.Command {
+	var rebuild bool
+
 	cmd := &cobra.Command{
 		Use:   "shell [-- command ...]",
 		Short: "Open a shell in this project's sandbox, or run one command in it",
@@ -26,7 +28,7 @@ func newShellCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
-			provisioned, err := provisionSandbox(a, b, cfg, backend.Options{})
+			provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: rebuild})
 			if err != nil {
 				return err
 			}
@@ -39,5 +41,6 @@ func newShellCommand(a *app.App) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&rebuild, "rebuild", false, "replace the sandbox before opening the shell, ending any sessions running in it")
 	return cmd
 }

@@ -104,6 +104,10 @@ shell:
 
 # Claude Code customization. Ignored by other agents.
 claude:
+  # One of Claude Code's own themes - dark, light, dark-ansi, light-ansi,
+  # dark-daltonized, light-daltonized - or a path to a theme file to install.
+  # theme: dark
+
   plugins:
     marketplaces: []
       # - anthropics/claude-plugins-official
@@ -113,6 +117,10 @@ claude:
   # Merged into the agent's settings.json.
   settings: {}
     # alwaysThinkingEnabled: true
+
+# Name for this project's zellij tab, when lid starts inside zellij.
+# zellij:
+#   display_name: my-project
 
 # Instructions injected into the agent's memory file.
 # memory: |

@@ -3,6 +3,7 @@ package backend
 import (
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,8 +31,22 @@ func handoffEnv(cfg *config.Config) map[string]string {
 	}
 }
 
+// handoffResource names the broker the way a network policy does: a broker on
+// the host is reached through host.docker.internal but allowed as localhost.
 func handoffResource(cfg *config.Config) string {
-	return fmt.Sprintf("localhost:%d", cfg.HandoffPort())
+	host := "localhost"
+	if u, err := url.Parse(cfg.HandoffURL()); err == nil && !hostIsLocal(u.Hostname()) {
+		host = u.Hostname()
+	}
+	return fmt.Sprintf("%s:%d", host, cfg.HandoffPort())
+}
+
+func hostIsLocal(host string) bool {
+	switch host {
+	case "", "localhost", "host.docker.internal", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 func InstallHandoffSkill(h Host, cfg *config.Config, force bool) (string, error) {

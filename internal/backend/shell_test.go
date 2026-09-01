@@ -87,13 +87,15 @@ func TestSbxShellWritesTheRCIntoTheSandbox(t *testing.T) {
 
 func TestSbxShellStartsBashUnderTheRC(t *testing.T) {
 	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
+	cfg := sbxCfg(t, "name: api\n")
 
-	argv, err := Get("sbx").ShellArgv(f.host(), sbxCfg(t, "name: api\n"), "", nil)
+	argv, err := Get("sbx").ShellArgv(f.host(), cfg, "", nil)
 	if err != nil {
 		t.Fatalf("ShellArgv: %v", err)
 	}
 
-	if got, want := strings.Join(argv, " "), "sbx exec -it api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
+	want := "sbx exec -it -w " + cfg.ProjectDir + " api -- bash --rcfile /home/agent/.lid-shellrc -i"
+	if got := strings.Join(argv, " "); got != want {
 		t.Errorf("argv = %q, want %q", got, want)
 	}
 }
@@ -135,12 +137,28 @@ func TestSbxShellStartsInTheWorkspaceWhenThereIsOne(t *testing.T) {
 	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
 	cfg := sbxCfg(t, "name: api\nworkspace: /home/agent/project\n")
 
+	argv, err := Get("sbx").ShellArgv(f.host(), cfg, "", nil)
+	if err != nil {
+		t.Fatalf("ShellArgv: %v", err)
+	}
+
+	if !contains(argv, "-w") || !contains(argv, "/home/agent/project") {
+		t.Errorf("argv = %v, want the shell to start in the workspace", argv)
+	}
+}
+
+// The rc file leaves the directory to sbx's own -w, so a shell.directory that
+// does not exist fails visibly instead of silently landing somewhere else.
+func TestSbxShellLeavesTheDirectoryToTheSandbox(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
+	cfg := sbxCfg(t, "name: api\nshell:\n  directory: /home/agent/project\n")
+
 	if _, err := Get("sbx").ShellArgv(f.host(), cfg, "", nil); err != nil {
 		t.Fatalf("ShellArgv: %v", err)
 	}
 
-	if !f.ran("sbx exec", "cd '/home/agent/project'") {
-		t.Errorf("the shell would start outside the workspace: %v", f.calls)
+	if f.ran("sbx exec", "cd '/home/agent/project'") {
+		t.Errorf("the rc file still cds, duplicating what -w already did: %v", f.calls)
 	}
 }
 
@@ -153,7 +171,7 @@ func TestSbxShellRunsACommandWithoutTouchingTheRC(t *testing.T) {
 		t.Fatalf("ShellArgv: %v", err)
 	}
 
-	if got, want := strings.Join(argv, " "), "sbx exec -i api -- bash -lc cd '/home/agent/project' && npm test"; got != want {
+	if got, want := strings.Join(argv, " "), "sbx exec -i -w /home/agent/project api -- bash -lc npm test"; got != want {
 		t.Errorf("argv = %q, want %q", got, want)
 	}
 	if f.ran("lid-shellrc") {

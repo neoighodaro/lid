@@ -473,6 +473,24 @@ func TestLoadRejectsTemplateWithBridges(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsTemplateWithBaseImage(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\ntemplate: my/image:v1\nbase_image: debian:trixie\n")
+
+	if !strings.Contains(err.Error(), "base_image") {
+		t.Errorf("error = %q, want it to mention base_image", err.Error())
+	}
+}
+
+// The default base image is what lid builds a generated Dockerfile on, so a
+// custom template must not pick one up and trip the exclusion above.
+func TestATemplateIsNotGivenABaseImageToIgnore(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ntemplate: my/image:v1\n")
+
+	if cfg.BaseImage != "" {
+		t.Errorf("BaseImage = %q, want none: the template is already built", cfg.BaseImage)
+	}
+}
+
 func TestLoadParsesBridges(t *testing.T) {
 	cfg := loadBody(t, "name: lid\nbridges:\n  - name: pgsql\n    port: 5432\n    host_port: 53432\n    env: DB_HOST\n")
 
@@ -680,6 +698,51 @@ func TestFileHashIsStableAndContentDependent(t *testing.T) {
 	}
 	if third == first {
 		t.Error("FileHash did not change after the file changed")
+	}
+}
+
+// The hash decides whether a sandbox is stale, so keys lid applies on every
+// start must not appear in it: changing one would ask for a rebuild that
+// rebuilds nothing.
+func TestKeysAppliedOnEveryStartDoNotMakeASandboxStale(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: lid\n")
+	cfg, err := Load(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := cfg.FileHash()
+	if err != nil {
+		t.Fatalf("FileHash: %v", err)
+	}
+
+	for _, added := range []struct {
+		key  string
+		body string
+	}{
+		{"claude.theme", "name: lid\nclaude:\n  theme: dark\n"},
+		{"claude.settings", "name: lid\nclaude:\n  settings:\n    model: claude-opus-5\n"},
+		{"memory", "name: lid\nmemory: be nice\n"},
+		{"zellij", "name: lid\nzellij:\n  display_name: Lid\n"},
+		{"shell", "name: lid\nshell:\n  aliases:\n    g: git\n"},
+	} {
+		write(t, dir, "lid.yaml", added.body)
+		after, err := cfg.FileHash()
+		if err != nil {
+			t.Fatalf("FileHash: %v", err)
+		}
+		if after != before {
+			t.Errorf("adding %s changed the hash, so the sandbox would be reported stale", added.key)
+		}
+	}
+
+	write(t, dir, "lid.yaml", "name: lid\npackages:\n  - jq\n")
+	after, err := cfg.FileHash()
+	if err != nil {
+		t.Fatalf("FileHash: %v", err)
+	}
+	if after == before {
+		t.Error("adding packages left the hash alone, so a real image change would go unnoticed")
 	}
 }
 

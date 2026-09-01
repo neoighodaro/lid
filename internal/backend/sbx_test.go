@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 // sbxFake stands in for a machine with sbx and docker installed, recording
@@ -303,13 +304,81 @@ func TestSbxDoesNotWarnAboutClaudeSettingsItNowApplies(t *testing.T) {
 	}
 }
 
-func TestSbxWarnsAboutTheKeysItDoesNotHonourYet(t *testing.T) {
-	warnings, err := Get(config.BackendSbx).Validate(sbxCfg(t, "name: api\nclaude:\n  theme: ./theme.json\n"))
+func TestSbxDoesNotWarnAboutAThemeItNowInstalls(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nclaude:\n  theme: dark\n")
+	warnings, err := Get(config.BackendSbx).Validate(cfg)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "claude.theme") {
-		t.Errorf("warnings = %v, want one naming claude.theme", warnings)
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: claude.theme reaches the sandbox now", warnings)
+	}
+}
+
+// A built-in theme is a name Claude Code already knows, so it belongs in
+// settings.json and nothing needs to be written into the sandbox's home.
+func TestABuiltInThemeIsNamedInTheSettingsAndNotInstalled(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nclaude:\n  theme: light-daltonized\n")
+
+	settings := claudeSettings(cfg)
+	if settings["theme"] != "light-daltonized" || settings["themeId"] != "light-daltonized" {
+		t.Errorf("settings = %v, want theme and themeId set to light-daltonized", settings)
+	}
+
+	body, err := claudeThemeBody(cfg)
+	if err != nil {
+		t.Fatalf("claudeThemeBody: %v", err)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want nothing to install for a built-in theme", body)
+	}
+}
+
+func TestAThemeFileIsInstalledUnderLidsOwnName(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nclaude:\n  theme: ./mocha.json\n")
+	if err := os.WriteFile(filepath.Join(cfg.ProjectDir, "mocha.json"), []byte(`{"base":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if id := claudeThemeID(cfg); id != "custom:lid" {
+		t.Errorf("theme id = %q, want custom:lid", id)
+	}
+
+	f := &sbxFake{hash: "written"}
+	if err := sbxApplyTheme(f.host(), cfg); err != nil {
+		t.Fatalf("sbxApplyTheme: %v", err)
+	}
+	if !strings.Contains(f.lines(), claudeThemeFile) || !strings.Contains(f.lines(), `{"base":"dark"}`) {
+		t.Errorf("the theme was never written into the sandbox\ncalls:\n%s", f.lines())
+	}
+}
+
+// A theme path that does not resolve is the kind of typo that would otherwise
+// leave the agent on its default theme with nothing said about it.
+func TestAThemeThatCannotBeReadSaysSoRatherThanBeingSkipped(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nclaude:\n  theme: ./nowhere.json\n")
+
+	err := sbxApplyTheme((&sbxFake{hash: "written"}).host(), cfg)
+	if err == nil {
+		t.Fatal("a missing theme file was accepted")
+	}
+	if !strings.Contains(err.Error(), "nowhere.json") {
+		t.Errorf("error = %q, want it to name the theme it could not read", err)
+	}
+}
+
+func TestAThemeThatIsNotJSONIsRefused(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nclaude:\n  theme: ./broken.json\n")
+	if err := os.WriteFile(filepath.Join(cfg.ProjectDir, "broken.json"), []byte("base: dark\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := sbxApplyTheme((&sbxFake{hash: "written"}).host(), cfg)
+	if err == nil {
+		t.Fatal("a theme that is not JSON was accepted")
+	}
+	if !strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("error = %q, want it to say the theme is not JSON", err)
 	}
 }
 
@@ -531,5 +600,71 @@ func TestSbxPointsTheStatusLineAtTheForkTheDashboardCameFrom(t *testing.T) {
 	line := f.written(t)["statusLine"].(map[string]any)
 	if !strings.Contains(line["command"].(string), "data/claude-dashboard-my-fork/statusline.mjs") {
 		t.Errorf("command = %v, want the fork's own data directory", line["command"])
+	}
+}
+
+// The broker is reached through host.docker.internal but allowed as localhost,
+// so the default URL must not put host.docker.internal in the policy.
+func TestABrokerOnTheHostIsAllowedAsLocalhost(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n")
+	if allow := sbxNetworkAllow(cfg); len(allow) != 1 || allow[0] != "localhost:8787" {
+		t.Errorf("allow = %v, want [localhost:8787]", allow)
+	}
+}
+
+// A broker somewhere else on the network is not localhost, and allowing
+// localhost for it would leave the sandbox blocked from the URL it was handed.
+func TestABrokerElsewhereIsAllowedUnderItsOwnHost(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n  url: http://192.168.1.5:9000\n")
+	if allow := sbxNetworkAllow(cfg); len(allow) != 1 || allow[0] != "192.168.1.5:9000" {
+		t.Errorf("allow = %v, want [192.168.1.5:9000], the host the agent is told to reach", allow)
+	}
+}
+
+// Swallowing this error to keep the handoff variables would hand the sandbox a
+// create command with every configured variable quietly missing.
+func TestAnEnvFileThatCannotBeReadStopsTheStart(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nenv_file:\n  - .nope\nenv:\n  NODE_ENV: development\n")
+
+	_, err := Get(config.BackendSbx).Validate(cfg)
+	if err == nil {
+		t.Fatal("a missing env_file was accepted, and every variable would be dropped in silence")
+	}
+	var f *failure.Error
+	if !errors.As(err, &f) || f.In != ".nope" {
+		t.Errorf("error = %v (in %q), want it to name the entry it could not read", err, f.In)
+	}
+}
+
+func TestSbxSaysWhenAnAgentGetsNoneOfItsClaudeBlock(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nagent: codex\nclaude:\n  settings:\n    model: x\nmemory: be nice\n")
+
+	warnings, err := Get(config.BackendSbx).Validate(cfg)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "claude") || !strings.Contains(warnings[0], "memory") {
+		t.Errorf("warnings = %v, want one naming claude and memory", warnings)
+	}
+}
+
+func TestPHPExtensionsWithoutThePHPRuntimeAreCalledOut(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nphp:\n  extensions:\n    - imagick\n")
+
+	warnings, err := Get(config.BackendSbx).Validate(cfg)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "php.extensions") {
+		t.Errorf("warnings = %v, want one naming php.extensions", warnings)
+	}
+
+	withPHP := sbxCfg(t, "name: api\nruntimes:\n  php: \"8.5\"\nphp:\n  extensions:\n    - imagick\n")
+	warnings, err = Get(config.BackendSbx).Validate(withPHP)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none: the php runtime installs them", warnings)
 	}
 }

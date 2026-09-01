@@ -1,8 +1,9 @@
 # lid sandbox configuration
 #
 # nono runs the agent as a caged host process, so this file describes what the
-# agent may reach on your machine. Keys the sbx backend uses to build an image
-# - base_image, template, packages, ports, workspace - do not apply here.
+# agent may reach on your machine. Keys that describe an image or what lid puts
+# inside one - base_image, template, packages, workspace, bridges, claude,
+# memory - do not apply here.
 
 name: {{ .Name }}
 agent: claude-code
@@ -67,6 +68,20 @@ env: {}
 env_file: []
   # - .env
   # - .env.sandbox
+
+# Commands run on your host at lifecycle points, from the project directory.
+scripts:
+  # Once, the first time lid starts this project.
+  on_create: []
+    # - pnpm install
+
+  # On every start. Must be idempotent.
+  on_start: []
+    # - ./scripts/warm-cache.sh
+
+# Name for this project's zellij tab, when lid starts inside zellij.
+# zellij:
+#   display_name: my-project
 
 # What 'lid shell' opens. Set either key and the shell becomes bash, so it can
 # be handed an init file; leave both unset and you keep your own shell.

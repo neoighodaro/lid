@@ -35,14 +35,29 @@ func (sbx) EnsureAvailable(h Host) error {
 }
 
 func (sbx) Validate(cfg *config.Config) ([]string, error) {
-	set := fieldsSet([]field{
-		{"claude.theme", cfg.Claude.Theme != ""},
-		{"memory", cfg.Memory != "" && !config.IsClaudeAgent(cfg.Agent)},
-	})
-	if set == "" {
-		return nil, nil
+	if _, err := cfg.ResolvedEnv(); err != nil {
+		return nil, err
 	}
-	return []string{fmt.Sprintf("ignoring %s: not wired up for sbx yet", set)}, nil
+
+	_, hasPHP := cfg.Runtimes["php"]
+	var warnings []string
+	for _, group := range []struct {
+		why    string
+		fields []field
+	}{
+		{fmt.Sprintf("the %s agent gets no agent-specific setup", cfg.Agent), []field{
+			{"claude", cfg.Claude.IsSet() && !config.IsClaudeAgent(cfg.Agent)},
+			{"memory", cfg.Memory != "" && !config.IsClaudeAgent(cfg.Agent)},
+		}},
+		{"nothing installs them without the php runtime", []field{
+			{"php.extensions", len(cfg.PHP.Extensions) > 0 && !hasPHP},
+		}},
+	} {
+		if set := fieldsSet(group.fields); set != "" {
+			warnings = append(warnings, fmt.Sprintf("ignoring %s: %s", set, group.why))
+		}
+	}
+	return warnings, nil
 }
 
 func (s sbx) Render(cfg *config.Config) (string, error) {
@@ -103,6 +118,9 @@ func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
 	if !config.IsClaudeAgent(cfg.Agent) {
 		return nil
 	}
+	if err := sbxApplyTheme(h, cfg); err != nil {
+		return err
+	}
 	if err := sbxApplySettings(h, cfg); err != nil {
 		return err
 	}
@@ -132,6 +150,19 @@ func sbxApplySettings(h Host, cfg *config.Config) error {
 	if out, err := h.output(sbxWriteHomeFileArgv(cfg, claudeSettingsFile, body)); err != nil {
 		return failure.New("cannot write the agent's settings in the %s sandbox: %s", cfg.Name, firstLine(out)).
 			WithFix("the agent would start with settings %s does not describe", cfg.Ref())
+	}
+	return nil
+}
+
+func sbxApplyTheme(h Host, cfg *config.Config) error {
+	body, err := claudeThemeBody(cfg)
+	if err != nil || body == "" {
+		return err
+	}
+
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, claudeThemeFile, body)); err != nil {
+		return failure.New("cannot write the agent's theme in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix("the agent would start on its default theme, not the one %s names", cfg.Ref())
 	}
 	return nil
 }
@@ -179,20 +210,21 @@ func (sbx) startArgv(cfg *config.Config) []string {
 //
 // The interactive session asks for a pseudo-TTY, without which bash comes up
 // with no job control. A command gets stdin but no terminal, so its output can
-// still be piped somewhere.
+// still be piped somewhere. Either way the directory is sbx's own -w rather than
+// a cd lid writes, so a directory that is not there fails where the user can see
+// it instead of leaving the session somewhere else.
 func (sbx) ShellArgv(h Host, cfg *config.Config, _ string, command []string) ([]string, error) {
 	dir := shellDir(cfg, sbxProjectDir(cfg))
 
 	if len(command) > 0 {
-		script := fmt.Sprintf("cd %s && %s", shellQuote(dir), shellCommandLine(command))
-		return []string{"sbx", "exec", "-i", cfg.Name, "--", "bash", "-lc", script}, nil
+		return []string{"sbx", "exec", "-i", "-w", dir, cfg.Name, "--", "bash", "-lc", shellCommandLine(command)}, nil
 	}
 
-	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, dir))); err != nil {
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
 		return nil, failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
 			WithFix("the sandbox has to be running for lid to open a shell in it")
 	}
-	return []string{"sbx", "exec", "-it", cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
+	return []string{"sbx", "exec", "-it", "-w", dir, cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
 }
 
 // sbxProjectDir is where the project sits inside the sandbox: the workspace when

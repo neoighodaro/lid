@@ -587,6 +587,9 @@ func withoutStartApplied(data []byte) []byte {
 	if claude, ok := doc["claude"].(map[string]any); ok {
 		delete(claude, "settings")
 		delete(claude, "theme")
+		if len(claude) == 0 {
+			delete(doc, "claude")
+		}
 	}
 	stripped, err := json.Marshal(doc)
 	if err != nil {

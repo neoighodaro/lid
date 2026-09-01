@@ -3,6 +3,8 @@ package backend
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/config"
@@ -23,8 +25,59 @@ func dashboardMarketplace(cfg *config.Config) string {
 	return ""
 }
 
+var claudeThemes = []string{
+	"dark",
+	"dark-ansi",
+	"dark-daltonized",
+	"light",
+	"light-ansi",
+	"light-daltonized",
+}
+
+const (
+	claudeThemeName = "lid"
+	claudeThemeFile = ".claude/themes/" + claudeThemeName + ".json"
+)
+
+func claudeThemeID(cfg *config.Config) string {
+	switch {
+	case cfg.Claude.Theme == "":
+		return ""
+	case contains(claudeThemes, cfg.Claude.Theme):
+		return cfg.Claude.Theme
+	default:
+		return "custom:" + claudeThemeName
+	}
+}
+
+func claudeThemeBody(cfg *config.Config) (string, error) {
+	if claudeThemeID(cfg) != "custom:"+claudeThemeName {
+		return "", nil
+	}
+	path := cfg.Claude.Theme
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cfg.ProjectDir, path)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", failure.New("cannot read the theme %q", cfg.Claude.Theme).
+			At(cfg.Ref()).
+			WithFix("claude.theme is a path to a theme file, or one of %s", strings.Join(claudeThemes, ", "))
+	}
+	if !json.Valid(body) {
+		return "", failure.New("the theme %q is not valid JSON", cfg.Claude.Theme).
+			At(cfg.Ref()).
+			WithFix("Claude Code reads a theme as JSON, so it would ignore this one")
+	}
+	return string(body), nil
+}
+
 func claudeSettings(cfg *config.Config) map[string]any {
 	want := map[string]any{}
+	if theme := claudeThemeID(cfg); theme != "" {
+		want["theme"] = theme
+		want["themeId"] = theme
+	}
 	if len(cfg.Claude.Plugins.Install) > 0 {
 		enabled := make(map[string]any, len(cfg.Claude.Plugins.Install))
 		for _, plugin := range cfg.Claude.Plugins.Install {

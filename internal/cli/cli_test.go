@@ -1233,8 +1233,35 @@ func TestShellOpensAShellInTheSandbox(t *testing.T) {
 
 	runSbxStart(t, dir, h, "shell")
 
-	if got, want := strings.Join(h.argv, " "), "sbx exec -it api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
+	want := "sbx exec -it -w " + dir + " api -- bash --rcfile /home/agent/.lid-shellrc -i"
+	if got := strings.Join(h.argv, " "); got != want {
 		t.Errorf("launched %q, want %q", got, want)
+	}
+}
+
+// The hint has to name the command the user actually ran, or it sends them to a
+// flag they were not using.
+func TestShellPointsAtItsOwnRebuildFlag(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "built-from-an-older-config", settings: "{}"}
+
+	res := runSbxStart(t, dir, h, "shell")
+
+	if !strings.Contains(res.err, "lid shell --rebuild") {
+		t.Errorf("the stale-config hint names another command:\n%s", res.err)
+	}
+}
+
+func TestShellRebuildReplacesTheSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "built-from-an-older-config", settings: "{}"}
+
+	runSbxStart(t, dir, h, "shell", "--rebuild")
+
+	if !h.ran("sbx rm") {
+		t.Errorf("--rebuild left the stale sandbox in place: %v", h.probes)
 	}
 }
 
@@ -1246,10 +1273,10 @@ func TestShellRunsAOneOffCommandInTheSandbox(t *testing.T) {
 	runSbxStart(t, dir, h, "shell", "--", "npm", "test")
 
 	got := strings.Join(h.argv, " ")
-	if !strings.HasPrefix(got, "sbx exec -i api -- bash -lc ") {
+	if !strings.Contains(got, "sbx exec -i -w ") {
 		t.Errorf("launched %q, want a one-off command rather than an interactive shell", got)
 	}
-	if !strings.HasSuffix(got, "&& npm test") {
+	if !strings.HasSuffix(got, "bash -lc npm test") {
 		t.Errorf("launched %q, want it to run the command it was given", got)
 	}
 }
@@ -1261,7 +1288,7 @@ func TestShellPassesTheCommandsOwnFlagsThrough(t *testing.T) {
 
 	runSbxStart(t, dir, h, "shell", "--", "ls", "-la")
 
-	if got := strings.Join(h.argv, " "); !strings.HasSuffix(got, "&& ls -la") {
+	if got := strings.Join(h.argv, " "); !strings.HasSuffix(got, "bash -lc ls -la") {
 		t.Errorf("launched %q, want the command's own flags to reach it", got)
 	}
 }
