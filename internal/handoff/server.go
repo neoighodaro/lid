@@ -13,6 +13,8 @@ const MaxWait = 5 * time.Minute
 
 func NewServer(store *Store) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /handoff", handleBoard(store))
+	mux.HandleFunc("GET /handoff/thread/{id}", handleThreadPage(store))
 	mux.HandleFunc("GET /handoff/threads", handleList(store))
 	mux.HandleFunc("POST /handoff/threads", handleOpen(store))
 	mux.HandleFunc("GET /handoff/threads/{id}", handleGet(store))
@@ -23,6 +25,43 @@ func NewServer(store *Store) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 	return mux
+}
+
+func handleBoard(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		threads, err := store.All(Filter{})
+		if err != nil {
+			http.Error(w, "Cannot read the threads.", http.StatusInternalServerError)
+			return
+		}
+
+		active := threads[:0]
+		for _, thread := range threads {
+			if thread.Status != StatusClosed {
+				active = append(active, thread)
+			}
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = RenderBoard(w, active)
+	}
+}
+
+func handleThreadPage(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		thread, err := store.Find(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "Cannot read the thread.", http.StatusInternalServerError)
+			return
+		}
+		if thread == nil {
+			http.Error(w, "Thread not found.", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = RenderThread(w, *thread)
+	}
 }
 
 type openReq struct {

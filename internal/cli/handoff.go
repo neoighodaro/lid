@@ -105,6 +105,7 @@ func serveBroker(a *app.App, port int) error {
 
 	server := &http.Server{Handler: handoff.NewServer(store)}
 	fmt.Fprintln(a.Err, ui.Err.Info.Render("Handoff broker on http://"+addr))
+	fmt.Fprintln(a.Err, ui.Err.Info.Render("  board at http://"+addr+"/handoff"))
 	fmt.Fprintln(a.Err, ui.Err.Info.Render("  threads in "+handoff.DefaultStorePath()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -164,6 +165,7 @@ func detachBroker(a *app.App, port int) error {
 	}
 
 	fmt.Fprintln(a.Err, ui.Err.Info.Render(fmt.Sprintf("Handoff broker running in the background on port %d (pid %d)", port, child.Process.Pid)))
+	fmt.Fprintln(a.Err, ui.Err.Info.Render(fmt.Sprintf("  board at http://127.0.0.1:%d/handoff", port)))
 	fmt.Fprintln(a.Err, ui.Err.Info.Render("  log in "+handoff.DefaultLogPath()))
 	fmt.Fprintln(a.Err, ui.Err.Info.Render("  stop it with 'lid handoff -K'"))
 	return nil

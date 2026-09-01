@@ -408,3 +408,137 @@ func TestAMisspelledFieldSaysWhichFieldItWas(t *testing.T) {
 		t.Errorf("body = %s, want it to name the field", rec.Body.String())
 	}
 }
+
+func getHTML(t *testing.T, h http.Handler, path string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec, rec.Body.String()
+}
+
+func TestTheBoardShowsAThreadAndItsMessages(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+	if _, err := store.Reply(thread.ID, "api", "the Authorization one", "", true); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, body := getHTML(t, NewServer(store), "/handoff")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want html so a browser renders the board", ct)
+	}
+	for _, want := range []string{"auth", "which header?", "the Authorization one", "web → api", thread.ID} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the board is missing %q", want)
+		}
+	}
+}
+
+func TestTheBoardLeavesOutClosedThreadsButKeepsThemReachable(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+	if _, err := store.Close(thread.ID); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store)
+
+	_, board := getHTML(t, server, "/handoff")
+	if strings.Contains(board, thread.ID) {
+		t.Error("a closed thread is still on the board, so finished work never clears")
+	}
+	if !strings.Contains(board, "No threads yet") {
+		t.Errorf("a board with nothing live on it says nothing:\n%s", board)
+	}
+
+	rec, page := getHTML(t, server, "/handoff/thread/"+thread.ID)
+	if rec.Code != http.StatusOK || !strings.Contains(page, "which header?") {
+		t.Errorf("a closed thread is unreachable by its own URL: status %d", rec.Code)
+	}
+}
+
+func TestTheBoardShowsTheNewestThreadFirst(t *testing.T) {
+	store := testStore(t)
+	older := openThread(t, store)
+	newer, err := store.Open("api", "web", "rate limits", "how many?")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := getHTML(t, NewServer(store), "/handoff")
+	if strings.Index(body, newer.ID) > strings.Index(body, older.ID) {
+		t.Error("the oldest thread is at the top, so the thread that just moved is the hardest to find")
+	}
+}
+
+func TestTheBoardClipsALongMessageAndLinksToTheWholeThread(t *testing.T) {
+	store := testStore(t)
+	long := strings.Repeat("x", previewChars+50)
+	thread, err := store.Open("web", "api", "logs", long)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, board := getHTML(t, NewServer(store), "/handoff")
+	if strings.Contains(board, long) {
+		t.Error("the board printed a whole long message, which buries every other thread")
+	}
+	if !strings.Contains(board, "/handoff/thread/"+thread.ID) {
+		t.Error("nothing links to the full thread the board clipped")
+	}
+
+	_, page := getHTML(t, NewServer(store), "/handoff/thread/"+thread.ID)
+	if !strings.Contains(page, long) {
+		t.Error("the thread page clipped the message too, so the full text is nowhere")
+	}
+}
+
+func TestTheBoardCountsTheMessagesItDidNotShow(t *testing.T) {
+	store := testStore(t)
+	thread := openThread(t, store)
+	for i := 0; i < previewCount+2; i++ {
+		if _, err := store.Reply(thread.ID, "api", "another", "web", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, board := getHTML(t, NewServer(store), "/handoff")
+	if !strings.Contains(board, "earlier message") {
+		t.Errorf("the board hid messages without saying so:\n%s", board)
+	}
+}
+
+func TestAThreadPageThatIsNotThereIsNotFound(t *testing.T) {
+	rec, _ := getHTML(t, NewServer(testStore(t)), "/handoff/thread/nope")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestTheJSONAPIStaysJSONAlongsideTheBoard(t *testing.T) {
+	store := testStore(t)
+	openThread(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/handoff/threads", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	NewServer(store).ServeHTTP(rec, req)
+
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want json; a browser asking nicely must not change what agents get", ct)
+	}
+}
+
+func TestTheBoardEscapesWhatAnAgentWrote(t *testing.T) {
+	store := testStore(t)
+	if _, err := store.Open("web", "api", "<script>alert(1)</script>", "body"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, board := getHTML(t, NewServer(store), "/handoff")
+	if strings.Contains(board, "<script>alert(1)</script>") {
+		t.Error("a subject an agent chose was rendered as markup, so any agent can script the board")
+	}
+}
