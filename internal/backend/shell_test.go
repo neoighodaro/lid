@@ -93,8 +93,41 @@ func TestSbxShellStartsBashUnderTheRC(t *testing.T) {
 		t.Fatalf("ShellArgv: %v", err)
 	}
 
-	if got, want := strings.Join(argv, " "), "sbx exec api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
+	if got, want := strings.Join(argv, " "), "sbx exec -it api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
 		t.Errorf("argv = %q, want %q", got, want)
+	}
+}
+
+// Without a pseudo-TTY bash comes up with no job control, which is not a shell
+// anyone can work in: no ctrl-C, no fg, no line editing.
+func TestSbxShellAsksForATerminal(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
+
+	argv, err := Get("sbx").ShellArgv(f.host(), sbxCfg(t, "name: api\n"), "", nil)
+	if err != nil {
+		t.Fatalf("ShellArgv: %v", err)
+	}
+
+	if !contains(argv, "-it") {
+		t.Errorf("argv = %v, want a pseudo-TTY for the interactive shell", argv)
+	}
+}
+
+// A one-off command keeps stdin, but takes no terminal: 'lid shell -- ls | head'
+// has to stay pipeable.
+func TestSbxShellKeepsStdinButNoTerminalForACommand(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
+
+	argv, err := Get("sbx").ShellArgv(f.host(), sbxCfg(t, "name: api\n"), "", []string{"ls"})
+	if err != nil {
+		t.Fatalf("ShellArgv: %v", err)
+	}
+
+	if !contains(argv, "-i") {
+		t.Errorf("argv = %v, want stdin held open for the command", argv)
+	}
+	if contains(argv, "-it") || contains(argv, "-t") {
+		t.Errorf("argv = %v, want no terminal for a command that may be piped", argv)
 	}
 }
 
@@ -120,7 +153,7 @@ func TestSbxShellRunsACommandWithoutTouchingTheRC(t *testing.T) {
 		t.Fatalf("ShellArgv: %v", err)
 	}
 
-	if got, want := strings.Join(argv, " "), "sbx exec api -- bash -lc cd '/home/agent/project' && npm test"; got != want {
+	if got, want := strings.Join(argv, " "), "sbx exec -i api -- bash -lc cd '/home/agent/project' && npm test"; got != want {
 		t.Errorf("argv = %q, want %q", got, want)
 	}
 	if f.ran("lid-shellrc") {

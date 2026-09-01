@@ -1233,7 +1233,7 @@ func TestShellOpensAShellInTheSandbox(t *testing.T) {
 
 	runSbxStart(t, dir, h, "shell")
 
-	if got, want := strings.Join(h.argv, " "), "sbx exec api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
+	if got, want := strings.Join(h.argv, " "), "sbx exec -it api -- bash --rcfile /home/agent/.lid-shellrc -i"; got != want {
 		t.Errorf("launched %q, want %q", got, want)
 	}
 }
@@ -1246,7 +1246,7 @@ func TestShellRunsAOneOffCommandInTheSandbox(t *testing.T) {
 	runSbxStart(t, dir, h, "shell", "--", "npm", "test")
 
 	got := strings.Join(h.argv, " ")
-	if !strings.HasPrefix(got, "sbx exec api -- bash -lc ") {
+	if !strings.HasPrefix(got, "sbx exec -i api -- bash -lc ") {
 		t.Errorf("launched %q, want a one-off command rather than an interactive shell", got)
 	}
 	if !strings.HasSuffix(got, "&& npm test") {

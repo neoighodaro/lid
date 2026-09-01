@@ -176,19 +176,23 @@ func (sbx) startArgv(cfg *config.Config) []string {
 // rc file written into the sandbox's home, which is where the shell: block ends
 // up; a one-off command gets the working directory and the sandbox's own login
 // environment, but not the aliases — bash does not expand those in a -c string.
+//
+// The interactive session asks for a pseudo-TTY, without which bash comes up
+// with no job control. A command gets stdin but no terminal, so its output can
+// still be piped somewhere.
 func (sbx) ShellArgv(h Host, cfg *config.Config, _ string, command []string) ([]string, error) {
 	dir := shellDir(cfg, sbxProjectDir(cfg))
 
 	if len(command) > 0 {
 		script := fmt.Sprintf("cd %s && %s", shellQuote(dir), shellCommandLine(command))
-		return []string{"sbx", "exec", cfg.Name, "--", "bash", "-lc", script}, nil
+		return []string{"sbx", "exec", "-i", cfg.Name, "--", "bash", "-lc", script}, nil
 	}
 
 	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, dir))); err != nil {
 		return nil, failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
 			WithFix("the sandbox has to be running for lid to open a shell in it")
 	}
-	return []string{"sbx", "exec", cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
+	return []string{"sbx", "exec", "-it", cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
 }
 
 // sbxProjectDir is where the project sits inside the sandbox: the workspace when

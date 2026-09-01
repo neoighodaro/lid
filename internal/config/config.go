@@ -244,7 +244,7 @@ func Parse(path string) (*Config, error) {
 	if cfg.Backend == "" {
 		cfg.Backend = DefaultBackend
 	}
-	if cfg.BaseImage == "" && cfg.BuildsImage() {
+	if cfg.BaseImage == "" && cfg.BuildsImage() && cfg.Template == "" {
 		cfg.BaseImage = DefaultBaseImage
 	}
 
@@ -425,6 +425,7 @@ func (c *Config) validateTemplateExclusions() error {
 		set   bool
 		why   string
 	}{
+		{"base_image", c.BaseImage != "", "a custom template is already built, so there is nothing to build it on"},
 		{"packages", len(c.Packages) > 0, "install them in your Dockerfile"},
 		{"runtimes", len(c.Runtimes) > 0, "install them in your Dockerfile"},
 		{"bridges", len(c.Bridges) > 0, "a custom template controls its own socat setup and session hooks"},
@@ -582,8 +583,10 @@ func withoutStartApplied(data []byte) []byte {
 	}
 	delete(doc, "memory")
 	delete(doc, "zellij")
+	delete(doc, "shell")
 	if claude, ok := doc["claude"].(map[string]any); ok {
 		delete(claude, "settings")
+		delete(claude, "theme")
 	}
 	stripped, err := json.Marshal(doc)
 	if err != nil {
