@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -346,5 +347,181 @@ func TestSbxRenderShowsTheDockerfileAndThePlan(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "sbx create") {
 		t.Errorf("rendered output does not show what lid would run:\n%s", rendered)
+	}
+}
+
+func TestSbxBootstrapsTheDashboardShimWhenTheDashboardIsInstalled(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@claude-dashboard\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// Without this the shim only appears once the plugin's own SessionStart hook
+	// has run, which is after Claude already tried to render the status line.
+	if !f.ran("sbx exec api", "ensure-statusline.mjs", "CLAUDE_PLUGIN_DATA") {
+		t.Errorf("the dashboard shim was never bootstrapped\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxLeavesTheDashboardAloneWhenItIsNotInstalled(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - superpowers@claude-plugins-official\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("ensure-statusline.mjs") {
+		t.Errorf("lid ran the dashboard hook for a sandbox without the dashboard\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxLeavesTheDashboardAloneForAnAgentThatIsNotClaude(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nagent: codex\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@claude-dashboard\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("ensure-statusline.mjs") {
+		t.Errorf("lid ran a Claude plugin hook for agent codex\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxFindsTheDashboardWhicheverMarketplaceItCameFrom(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@my-fork\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// The plugin's data directory is named <plugin>-<marketplace>, so a fork's
+	// shim lands somewhere else entirely.
+	if !f.ran("cache/my-fork/claude-dashboard", "data/claude-dashboard-my-fork") {
+		t.Errorf("the fork's cache and data paths were not used\ncalls: %v", f.calls)
+	}
+}
+
+func TestTheDashboardShimScriptIsWhatARealShellAccepts(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+	home := t.TempDir()
+
+	cache := filepath.Join(home, ".claude", "plugins", "cache", "claude-dashboard", "claude-dashboard")
+	for _, version := range []string{"1.9.0", "1.32.0"} {
+		hooks := filepath.Join(cache, version, "hooks")
+		if err := os.MkdirAll(hooks, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(hooks, "ensure-statusline.mjs"), []byte("//"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stub node so the script's plumbing is what is under test, not the plugin.
+	bin := t.TempDir()
+	stub := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$CLAUDE_PLUGIN_ROOT\" \"$CLAUDE_PLUGIN_DATA\" \"$1\" > " + filepath.Join(bin, "ran") + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "node"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	argv := sbxDashboardShimArgv(cfg, "claude-dashboard")
+	cmd := exec.Command("bash", "-c", argv[len(argv)-1])
+	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the shim script failed: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(bin, "ran"))
+	if err != nil {
+		t.Fatalf("the hook never ran: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	// sort -V, not sort: 1.32.0 is newer than 1.9.0 but sorts before it.
+	if want := filepath.Join(cache, "1.32.0"); lines[0] != want {
+		t.Errorf("CLAUDE_PLUGIN_ROOT = %q, want %q", lines[0], want)
+	}
+	if want := filepath.Join(home, ".claude", "plugins", "data", "claude-dashboard-claude-dashboard"); lines[1] != want {
+		t.Errorf("CLAUDE_PLUGIN_DATA = %q, want %q", lines[1], want)
+	}
+	if !strings.HasSuffix(lines[2], filepath.Join("1.32.0", "hooks", "ensure-statusline.mjs")) {
+		t.Errorf("hook = %q, want the newest version's hook", lines[2])
+	}
+}
+
+func TestTheDashboardShimScriptIsQuietWhenThePluginIsMissing(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+
+	argv := sbxDashboardShimArgv(cfg, "claude-dashboard")
+	cmd := exec.Command("bash", "-c", argv[len(argv)-1])
+	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("an empty sandbox aborted provisioning: %v\n%s", err, out)
+	}
+	if len(out) > 0 {
+		t.Errorf("output = %q, want nothing; provisioning noise reads as a failure", out)
+	}
+}
+
+func TestSbxPointsTheStatusLineAtTheDashboardWithoutBeingAsked(t *testing.T) {
+	f := &settingsFake{current: `{}`}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@claude-dashboard\n")
+
+	if err := (sbx{}).PrepareAgent(f.host(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := f.written(t)["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("no statusLine was written, so the dashboard renders nothing\nsettings: %v", f.written(t))
+	}
+	// Byte-identical to what the plugin writes itself, so its own
+	// migrateStatusLine() recognises the form and never rewrites it.
+	want := `node "/home/agent/.claude/plugins/data/claude-dashboard-claude-dashboard/statusline.mjs"`
+	if line["command"] != want {
+		t.Errorf("command = %v, want %q", line["command"], want)
+	}
+	if line["type"] != "command" {
+		t.Errorf("type = %v, want \"command\"", line["type"])
+	}
+}
+
+func TestSbxLetsTheConfigOverrideTheStatusLineItWouldPick(t *testing.T) {
+	f := &settingsFake{current: `{}`}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@claude-dashboard\n  settings:\n    statusLine:\n      type: command\n      command: my-own-statusline\n")
+
+	if err := (sbx{}).PrepareAgent(f.host(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	line := f.written(t)["statusLine"].(map[string]any)
+	if line["command"] != "my-own-statusline" {
+		t.Errorf("command = %v, want the config's own; lid overrode what the user asked for", line["command"])
+	}
+}
+
+func TestSbxSetsNoStatusLineWithoutTheDashboard(t *testing.T) {
+	f := &settingsFake{current: `{}`}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - superpowers@claude-plugins-official\n")
+
+	if err := (sbx{}).PrepareAgent(f.host(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.written(t)["statusLine"]; ok {
+		t.Error("lid set a dashboard statusLine for a sandbox without the dashboard")
+	}
+}
+
+func TestSbxPointsTheStatusLineAtTheForkTheDashboardCameFrom(t *testing.T) {
+	f := &settingsFake{current: `{}`}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@my-fork\n")
+
+	if err := (sbx{}).PrepareAgent(f.host(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	line := f.written(t)["statusLine"].(map[string]any)
+	if !strings.Contains(line["command"].(string), "data/claude-dashboard-my-fork/statusline.mjs") {
+		t.Errorf("command = %v, want the fork's own data directory", line["command"])
 	}
 }

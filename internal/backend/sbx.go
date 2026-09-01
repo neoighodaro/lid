@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	sbxConfigHash      = "/home/agent/.lid-config-hash"
+	sbxHome            = "/home/agent"
+	sbxConfigHash      = sbxHome + "/.lid-config-hash"
 	claudeSettingsFile = ".claude/settings.json"
 	claudeMemoryFile   = ".claude/CLAUDE.md"
 )
@@ -112,7 +113,7 @@ func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
 }
 
 func sbxApplySettings(h Host, cfg *config.Config) error {
-	want := claudeSettings(cfg)
+	want := mergeSettings(sbxDefaultSettings(cfg), claudeSettings(cfg))
 	if len(want) == 0 {
 		return nil
 	}
@@ -189,11 +190,41 @@ func sbxSteps(cfg *config.Config) [][]string {
 		steps = append(steps, []string{"sbx", "exec", "-u", "root", cfg.Name, "--", "bash", "-c", link})
 	}
 
+	if marketplace := dashboardMarketplace(cfg); marketplace != "" {
+		steps = append(steps, sbxDashboardShimArgv(cfg, marketplace))
+	}
+
 	for _, command := range cfg.Scripts.OnCreate {
 		steps = append(steps, []string{"sbx", "exec", cfg.Name, "--", "bash", "-lc", command})
 	}
 
 	return steps
+}
+
+func sbxDefaultSettings(cfg *config.Config) map[string]any {
+	marketplace := dashboardMarketplace(cfg)
+	if marketplace == "" {
+		return nil
+	}
+	shim := fmt.Sprintf("%s/.claude/plugins/data/%s-%s/statusline.mjs", sbxHome, dashboardPlugin, marketplace)
+	return map[string]any{
+		"statusLine": map[string]any{
+			"type":    "command",
+			"command": fmt.Sprintf("node %q", shim),
+		},
+	}
+}
+
+func sbxDashboardShimArgv(cfg *config.Config, marketplace string) []string {
+	cache := fmt.Sprintf("$HOME/.claude/plugins/cache/%s/%s", marketplace, dashboardPlugin)
+	data := fmt.Sprintf("$HOME/.claude/plugins/data/%s-%s", dashboardPlugin, marketplace)
+	script := fmt.Sprintf(`root=$(ls -d %s/*/ 2>/dev/null | sort -V | tail -1)
+root=${root%%/}
+hook="$root/hooks/ensure-statusline.mjs"
+[ -n "$root" ] && [ -f "$hook" ] || exit 0
+CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PLUGIN_DATA=%q node "$hook" || true
+`, cache, data)
+	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", script}
 }
 
 func sbxCreateArgv(cfg *config.Config) []string {

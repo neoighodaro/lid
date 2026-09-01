@@ -9,6 +9,20 @@ import (
 	"github.com/neoighodaro/lid/internal/failure"
 )
 
+const dashboardPlugin = "claude-dashboard"
+
+func dashboardMarketplace(cfg *config.Config) string {
+	if !config.IsClaudeAgent(cfg.Agent) {
+		return ""
+	}
+	for _, entry := range cfg.Claude.Plugins.Install {
+		if name, marketplace, ok := strings.Cut(entry, "@"); ok && name == dashboardPlugin {
+			return marketplace
+		}
+	}
+	return ""
+}
+
 func claudeSettings(cfg *config.Config) map[string]any {
 	want := map[string]any{}
 	if len(cfg.Claude.Plugins.Install) > 0 {
