@@ -138,6 +138,48 @@ type Handoff struct {
 	URL     string `yaml:"url"`
 }
 
+// Paths grants a nono session access to host directories the sandbox would
+// otherwise refuse. A session is caged around the project, so anything the
+// agent reads from elsewhere - a hooks directory a dotfiles repo owns, a
+// package manager's global config - has to be named here or it is denied.
+type Paths struct {
+	Read     []string `yaml:"read"`
+	ReadFile []string `yaml:"read_file"`
+	Allow    []string `yaml:"allow"`
+	Deny     []string `yaml:"deny"`
+}
+
+func (p Paths) IsSet() bool {
+	return len(p.Read) > 0 || len(p.ReadFile) > 0 || len(p.Allow) > 0 || len(p.Deny) > 0
+}
+
+// Grants returns the paths in p under the keys nono's profile uses, with a
+// leading ~ rewritten to $HOME: nono expands the variable, not the shorthand.
+func (p Paths) Grants() map[string][]string {
+	grants := map[string][]string{}
+	for key, paths := range map[string][]string{
+		"read":      p.Read,
+		"read_file": p.ReadFile,
+		"allow":     p.Allow,
+		"deny":      p.Deny,
+	} {
+		for _, path := range paths {
+			grants[key] = append(grants[key], expandHome(path))
+		}
+	}
+	return grants
+}
+
+func expandHome(path string) string {
+	if path == "~" {
+		return "$HOME"
+	}
+	if strings.HasPrefix(path, "~/") {
+		return "$HOME/" + path[2:]
+	}
+	return path
+}
+
 // Bridge declares a host-service tunnel: a service published on the host at
 // HostPort becomes reachable inside the sandbox as Name:Port, so the project's
 // .env needs no sandbox-specific edits. Env names a variable to point at the
@@ -164,6 +206,7 @@ type Config struct {
 	Network        []string          `yaml:"network"`
 	NetworkProfile string            `yaml:"network_profile"`
 	AllowCommands  []string          `yaml:"allow_commands"`
+	Paths          Paths             `yaml:"paths"`
 	Scripts        Scripts           `yaml:"scripts"`
 	Shell          Shell             `yaml:"shell"`
 	Claude         Claude            `yaml:"claude"`
@@ -332,6 +375,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validatePaths(); err != nil {
+		return err
+	}
+
 	if c.Workspace != "" && !filepath.IsAbs(c.Workspace) {
 		return failure.New("workspace %q is not an absolute path", c.Workspace).
 			WithFix("workspace is a path inside the sandbox, so start it with /")
@@ -388,6 +435,7 @@ func (c *Config) validateBackendExclusions() error {
 		}{
 			{"allow_commands", len(c.AllowCommands) > 0, "a container image has no host command shims to lift"},
 			{"network_profile", c.NetworkProfile != "", "a container image has no nono network policy to pick"},
+			{"paths", c.Paths.IsSet(), "a container image has no host filesystem to grant"},
 		} {
 			if conflict.set {
 				return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).
@@ -407,6 +455,25 @@ func (c *Config) validateBackendExclusions() error {
 	} {
 		if conflict.set {
 			return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).WithFix("%s, or switch to the %s backend", conflict.why, BackendSbx)
+		}
+	}
+	return nil
+}
+
+// validatePaths keeps a grant from reaching nono as a path it cannot resolve. A
+// relative one would be read against wherever the session happened to launch,
+// which is not what the person who wrote it meant.
+func (c *Config) validatePaths() error {
+	for key, paths := range c.Paths.Grants() {
+		for _, path := range paths {
+			if strings.TrimSpace(path) == "" {
+				return failure.New("a path in paths.%s is empty", key).
+					WithFix("remove it, or name the directory it should grant")
+			}
+			if !filepath.IsAbs(path) && !strings.HasPrefix(path, "$") {
+				return failure.New("path %q in paths.%s is not absolute", path, key).
+					WithFix("write it in full, from / or ~, so it means the same wherever the session starts")
+			}
 		}
 	}
 	return nil

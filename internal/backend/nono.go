@@ -84,7 +84,7 @@ var nonoRuntimeWrites = map[string][]string{
 	"bun":    {"$HOME/.bun/install/cache"},
 	"go":     {"$HOME/go/pkg"},
 	"node":   {"$HOME/.npm"},
-	"pnpm":   {"$HOME/Library/pnpm/store", "$HOME/.local/share/pnpm/store"},
+	"pnpm":   {"$HOME/Library/pnpm/store", "$HOME/.local/share/pnpm/store", "$HOME/.config/pnpm"},
 	"python": {"$HOME/.local/share/uv"},
 	"rust":   {"$HOME/.cargo"},
 }
@@ -135,8 +135,10 @@ type nonoWorkdir struct {
 }
 
 type nonoFilesystem struct {
-	Allow []string `json:"allow,omitempty"`
-	Deny  []string `json:"deny,omitempty"`
+	Allow    []string `json:"allow,omitempty"`
+	Read     []string `json:"read,omitempty"`
+	ReadFile []string `json:"read_file,omitempty"`
+	Deny     []string `json:"deny,omitempty"`
 }
 
 type nonoNetwork struct {
@@ -604,7 +606,14 @@ func nonoFilesystemFor(cfg *config.Config) *nonoFilesystem {
 		fs.Allow = append(fs.Allow, nonoRuntimeWrites[name]...)
 		fs.Deny = append(fs.Deny, nonoRuntimeDenies[name]...)
 	}
-	if len(fs.Allow) == 0 && len(fs.Deny) == 0 {
+
+	grants := cfg.Paths.Grants()
+	fs.Read = append(fs.Read, grants["read"]...)
+	fs.ReadFile = append(fs.ReadFile, grants["read_file"]...)
+	fs.Allow = append(fs.Allow, grants["allow"]...)
+	fs.Deny = append(fs.Deny, grants["deny"]...)
+
+	if len(fs.Allow) == 0 && len(fs.Deny) == 0 && len(fs.Read) == 0 && len(fs.ReadFile) == 0 {
 		return nil
 	}
 	return &fs

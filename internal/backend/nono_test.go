@@ -775,3 +775,40 @@ func TestNonoDoesNotRenderTheProfileWhenNobodyAskedAboutStaleness(t *testing.T) 
 		t.Error("staleness was reported without being probed for")
 	}
 }
+
+// A nono session is caged around the project, so anything the agent reads
+// elsewhere - hooks a dotfiles repo owns, a tool's global config - is denied
+// until the config names it. Without this the only way through is nono's own
+// prompt, which has to be answered again every session.
+func TestNonoGrantsTheHostPathsTheConfigNames(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\npaths:\n  read:\n    - ~/dotfiles/claude\n  read_file:\n    - ~/dotfiles/claude/CLAUDE.md\n  allow:\n    - ~/.cache/tool\n  deny:\n    - ~/.ssh\n")
+
+	for key, want := range map[string]string{
+		"read":      "$HOME/dotfiles/claude",
+		"read_file": "$HOME/dotfiles/claude/CLAUDE.md",
+		"allow":     "$HOME/.cache/tool",
+		"deny":      "$HOME/.ssh",
+	} {
+		if !hasGroup(fs[key], want) {
+			t.Errorf("the profile's filesystem.%s does not carry %s, so the session still refuses it: %v", key, want, fs)
+		}
+	}
+}
+
+func TestNonoLeavesTheFilesystemSectionOutWhenNothingNeedsIt(t *testing.T) {
+	profile := profileOf(t, "name: api\nbackend: nono\n")
+
+	if section, ok := profile["filesystem"]; ok {
+		t.Errorf("filesystem = %v, want the section left out entirely", section)
+	}
+}
+
+// pnpm reads its global config before it reads a project, so granting the store
+// alone leaves every command in a caged session asking for the same directory.
+func TestNonoGrantsPnpmsGlobalConfigDirectoryAndNotOnlyItsStore(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  node: \"24\"\n  pnpm: \"11\"\n")
+
+	if !hasGroup(fs["allow"], "$HOME/.config/pnpm") {
+		t.Errorf("pnpm is declared but its global config directory is denied, so every pnpm command prompts: %v", fs)
+	}
+}

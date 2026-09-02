@@ -2179,3 +2179,34 @@ func TestTheCountdownKeepsTheWholeLineWhenItFits(t *testing.T) {
 		t.Errorf("line = %q, want no cut marker on a line that fits", line)
 	}
 }
+
+func TestConfigCommandShowsTheHostPathsANonoSessionGrants(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: demo\nbackend: nono\npaths:\n  read:\n    - ~/dotfiles/hooks\n  read_file:\n    - ~/dotfiles/settings.json\n  allow:\n    - ~/.cache/tool\n  deny:\n    - ~/.ssh\n")
+
+	got, err := run(t, dir, "config")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr: %s)", err, got.err)
+	}
+	for label, path := range map[string]string{
+		"paths.read":      "~/dotfiles/hooks",
+		"paths.read_file": "~/dotfiles/settings.json",
+		"paths.allow":     "~/.cache/tool",
+		"paths.deny":      "~/.ssh",
+	} {
+		if !hasGrantRow(got.out, label, path) {
+			t.Errorf("no %s row grants %s:\n%s", label, path, got.out)
+		}
+	}
+}
+
+// hasGrantRow pairs a label with the path on its own line: the labels here
+// share prefixes, so "paths.read" alone would be satisfied by the read_file row.
+func hasGrantRow(out, label, value string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, label) && strings.Contains(line, value) {
+			return true
+		}
+	}
+	return false
+}

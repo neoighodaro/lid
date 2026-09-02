@@ -1307,3 +1307,47 @@ func TestAHandoffURLMustBeHTTPWithAPort(t *testing.T) {
 		}
 	}
 }
+
+// nono expands $HOME in a profile but not the shell's ~, so a path written the
+// way people write paths has to be rewritten before it is handed over.
+func TestAHomeShorthandInAPathGrantIsRewrittenTheWayNonoExpandsIt(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nbackend: nono\npaths:\n  read:\n    - ~/dotfiles/claude\n  read_file:\n    - ~/dotfiles/claude/CLAUDE.md\n  allow:\n    - /opt/shared\n  deny:\n    - ~/.ssh\n")
+
+	grants := cfg.Paths.Grants()
+	for key, want := range map[string]string{
+		"read":      "$HOME/dotfiles/claude",
+		"read_file": "$HOME/dotfiles/claude/CLAUDE.md",
+		"allow":     "/opt/shared",
+		"deny":      "$HOME/.ssh",
+	} {
+		if len(grants[key]) != 1 || grants[key][0] != want {
+			t.Errorf("paths.%s = %v, want [%s]", key, grants[key], want)
+		}
+	}
+}
+
+func TestAPathGrantThatIsNotAbsoluteIsRejected(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: nono\npaths:\n  read:\n    - ../dotfiles\n")
+
+	if !strings.Contains(err.Error(), "../dotfiles") {
+		t.Errorf("error = %q, want it to name the path it cannot use", err.Error())
+	}
+}
+
+func TestAnEmptyPathGrantIsRejected(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: nono\npaths:\n  read:\n    - \"\"\n")
+
+	if !strings.Contains(err.Error(), "paths.read") {
+		t.Errorf("error = %q, want it to name the key the empty entry is under", err.Error())
+	}
+}
+
+// paths grants host directories, and an image has no host to grant, so setting
+// it under a container backend is a mistake worth stopping rather than dropping.
+func TestPathsUnderAContainerBackendIsRejectedRatherThanIgnored(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: sbx\npaths:\n  read:\n    - ~/dotfiles\n")
+
+	if !strings.Contains(err.Error(), "paths") {
+		t.Errorf("error = %q, want it to name paths", err.Error())
+	}
+}

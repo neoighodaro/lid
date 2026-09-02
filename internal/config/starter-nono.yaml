@@ -51,6 +51,27 @@ allow_commands: []
   # - pip
   # - brew
 
+# Host paths the sandbox may reach outside this project. A session is caged
+# around the project directory, so a hooks directory your dotfiles own, or a
+# tool's global config, is denied until it is named here. nono prints what it
+# refused when a session ends, which is where these usually come from.
+paths:
+  # Directories, read-only.
+  read: []
+    # - ~/Developer/dotfiles/configs/claude
+
+  # Single files, read-only.
+  read_file: []
+    # - ~/Developer/dotfiles/configs/claude/CLAUDE.md
+
+  # Directories the sandbox may also write to.
+  allow: []
+    # - ~/.cache/my-tool
+
+  # Directories to refuse, even when something above would grant them.
+  deny: []
+    # - ~/.ssh
+
 # Cross-sandbox questions. Run the broker with 'lid handoff -D', then the agent
 # can ask agents in other sandboxes and answer theirs. A nono session runs in
 # your own home, so lid will not install the agent skill there uninvited - run
