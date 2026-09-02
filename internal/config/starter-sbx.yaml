@@ -7,8 +7,9 @@ backend: sbx
 # Base image the generated Dockerfile builds on.
 # base_image: docker/sandbox-templates:claude-code-minimal
 
-# Copy the project to this directory inside the sandbox after creation.
-# When unset, the project stays at the mirrored host path.
+# A second name for the project inside the sandbox: a symlink to the mirrored
+# host path, where shells and on_start scripts begin. Nothing is copied, and
+# the project stays reachable at the host path either way.
 # workspace: /workspace
 
 # Custom template image, which skips Dockerfile generation. When set,
