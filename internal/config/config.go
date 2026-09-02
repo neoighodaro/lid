@@ -349,12 +349,8 @@ func (c *Config) Validate() error {
 	}
 
 	for _, domain := range c.Network {
-		if domain == "" {
-			return failure.New("a network entry is empty").WithFix("remove it, or name the host it should allow")
-		}
-		if strings.Contains(domain, "://") {
-			return failure.New("network entry %q is a URL", domain).
-				WithFix("drop the scheme and use a host pattern, like 'example.com' or '*.example.com'")
+		if err := ValidateDomain(domain); err != nil {
+			return err
 		}
 	}
 

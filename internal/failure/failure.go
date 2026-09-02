@@ -10,7 +10,18 @@ type Error struct {
 	What string
 	In   string
 	Fix  string
+
+	cause error
 }
+
+// Because records what this failure stands for, so a caller that knows how to
+// handle one particular condition can still recognise it behind the wording.
+func (e *Error) Because(cause error) *Error {
+	e.cause = cause
+	return e
+}
+
+func (e *Error) Unwrap() error { return e.cause }
 
 func (e *Error) Error() string {
 	if e.Fix == "" {

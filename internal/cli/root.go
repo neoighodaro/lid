@@ -51,6 +51,7 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		newShellCommand(a),
 		newStatusCommand(a),
 		newStopCommand(a),
+		newNetworkCommand(a),
 		newHandoffCommand(a),
 		newUpdateCommand(a),
 		newUpdateCheckCommand(a),

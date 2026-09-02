@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 
@@ -24,7 +25,23 @@ type Backend interface {
 	ShellArgv(h Host, cfg *config.Config, profilePath string, command []string) ([]string, error)
 	Status(h Host, cfg *config.Config, opts StatusOptions) (State, error)
 	Stop(h Host, cfg *config.Config) error
+	// Network changes the firewall of a sandbox that is already up. A backend
+	// that can only decide policy when a session launches says so rather than
+	// pretending the change landed.
+	Network(h Host, cfg *config.Config, action NetworkAction, domains []string) error
 }
+
+// ErrNetworkAtLaunch marks a backend that fixes network policy when a session
+// launches, so a rule cannot be added to one already running.
+var ErrNetworkAtLaunch = errors.New("network policy is set when a session launches")
+
+type NetworkAction string
+
+const (
+	NetworkAllow  NetworkAction = "allow"
+	NetworkDeny   NetworkAction = "deny"
+	NetworkRemove NetworkAction = "remove"
+)
 
 type Options struct {
 	Rebuild bool

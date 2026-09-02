@@ -10,8 +10,9 @@ func newShellCommand(a *app.App) *cobra.Command {
 	var rebuild bool
 
 	cmd := &cobra.Command{
-		Use:   "shell [-- command ...]",
-		Short: "Open a shell in this project's sandbox, or run one command in it",
+		Use:     "shell [-- command ...]",
+		Aliases: []string{"ssh"},
+		Short:   "Open a shell in this project's sandbox, or run one command in it",
 		Long: "Open a shell in this project's sandbox, or run one command in it.\n\n" +
 			"The sandbox is created first if it is not there yet, exactly as 'lid start' would.\n" +
 			"An interactive shell picks up the aliases and directory from the shell: block;\n" +

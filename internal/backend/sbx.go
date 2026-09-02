@@ -447,6 +447,30 @@ func (sbx) Stop(h Host, cfg *config.Config) error {
 	return nil
 }
 
+func (sbx) Network(h Host, cfg *config.Config, action NetworkAction, domains []string) error {
+	if len(domains) == 0 {
+		return nil
+	}
+	for _, argv := range sbxNetworkArgv(cfg, action, domains) {
+		if err := h.exec(argv); err != nil {
+			return failure.New("sbx would not %s %s for the %s sandbox", action, strings.Join(domains, ", "), cfg.Name).
+				WithFix("the output above says why; 'sbx policy ls' shows the rules already in place")
+		}
+	}
+	return nil
+}
+
+func sbxNetworkArgv(cfg *config.Config, action NetworkAction, domains []string) [][]string {
+	if action == NetworkRemove {
+		argvs := make([][]string, 0, len(domains))
+		for _, domain := range domains {
+			argvs = append(argvs, []string{"sbx", "policy", "rm", "network", "--sandbox", cfg.Name, "--resource", domain})
+		}
+		return argvs
+	}
+	return [][]string{{"sbx", "policy", string(action), "network", "--sandbox", cfg.Name, strings.Join(domains, ",")}}
+}
+
 func sbxIsStale(h Host, cfg *config.Config) bool {
 	want, err := cfg.FileHash()
 	if err != nil {

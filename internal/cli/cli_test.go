@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
@@ -1332,6 +1333,19 @@ func TestShellOpensAShellInTheSandbox(t *testing.T) {
 	}
 }
 
+func TestSSHIsTheSameCommandAsShell(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{sandbox: "api", hash: "current", settings: "{}"}
+
+	runSbxStart(t, dir, h, "ssh")
+
+	want := "sbx exec -it -w " + dir + " api -- bash --rcfile /home/agent/.lid-shellrc -i"
+	if got := strings.Join(h.argv, " "); got != want {
+		t.Errorf("launched %q, want %q", got, want)
+	}
+}
+
 // The hint has to name the command the user actually ran, or it sends them to a
 // flag they were not using.
 func TestShellPointsAtItsOwnRebuildFlag(t *testing.T) {
@@ -1691,5 +1705,294 @@ func TestHiddenUpdateCheckIsNotOfferedToUsers(t *testing.T) {
 		if cmd.Name() == update.CheckCommand && !cmd.Hidden {
 			t.Error("the background update worker is listed in 'lid --help' as if it were a command to run")
 		}
+	}
+}
+
+func TestNetworkAllowOpensTheHostOnTheRunningSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	got, err := runWithHost(t, dir, h, "network", "allow", "pypi.org")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+
+	if !h.ran("sbx policy allow network --sandbox api pypi.org") {
+		t.Errorf("never applied the rule; ran %v", h.probes)
+	}
+	if !strings.Contains(got.err, "pypi.org") {
+		t.Errorf("said nothing about the host:\n%s", got.err)
+	}
+}
+
+// Without --persist the rule dies with the sandbox, so the config must be left
+// exactly as the user wrote it.
+func TestNetworkAllowWithoutPersistLeavesTheConfigAlone(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	if _, err := runWithHost(t, dir, h, "network", "allow", "pypi.org"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); strings.Contains(body, "pypi.org") {
+		t.Errorf("config was edited without --persist:\n%s", body)
+	}
+}
+
+func TestNetworkAllowWithPersistWritesTheHostIntoTheConfig(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	got, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "--persist")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); !strings.Contains(body, "pypi.org") {
+		t.Errorf("config missing the host:\n%s", body)
+	}
+	if !h.ran("sbx policy allow network --sandbox api pypi.org") {
+		t.Error("--persist saved the rule but never applied it to the running sandbox")
+	}
+}
+
+func TestNetworkRemoveWithPersistDropsTheHostFromTheConfig(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\nnetwork:\n  - pypi.org\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	if _, err := runWithHost(t, dir, h, "network", "remove", "pypi.org", "--persist"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); strings.Contains(body, "pypi.org") {
+		t.Errorf("config still lists the host:\n%s", body)
+	}
+	if !h.ran("sbx policy rm network --sandbox api --resource pypi.org") {
+		t.Errorf("never took the rule off the sandbox; ran %v", h.probes)
+	}
+}
+
+// A runtime-only rule has nowhere to go when there is no sandbox, so saying so
+// beats reporting a change that reached nothing.
+func TestNetworkAllowWithNoSandboxSaysWhatToRun(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[]`}
+
+	_, err := runWithHost(t, dir, h, "network", "allow", "pypi.org")
+
+	if err == nil {
+		t.Fatal("allowed a host on a sandbox that does not exist")
+	}
+	if !strings.Contains(err.Error(), "lid start") || !strings.Contains(err.Error(), "--persist") {
+		t.Errorf("error = %q, want both ways forward named", err)
+	}
+}
+
+func TestNetworkAllowWithNoSandboxStillPersists(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[]`}
+
+	got, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "--persist")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); !strings.Contains(body, "pypi.org") {
+		t.Errorf("config missing the host:\n%s", body)
+	}
+	if h.ran("sbx policy") {
+		t.Error("touched policy for a sandbox that does not exist")
+	}
+	if !strings.Contains(got.err, "lid start") {
+		t.Errorf("never said when this takes effect:\n%s", got.err)
+	}
+}
+
+// The config lists what is allowed and has no denylist, so a --persist here
+// would have nowhere to write.
+func TestNetworkDenyHasNoPersistFlag(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	_, err := runWithHost(t, dir, h, "network", "deny", "evil.example", "--persist")
+
+	if err == nil {
+		t.Fatal("network deny accepted --persist")
+	}
+}
+
+func TestNetworkDenyClosesTheHostOnTheRunningSandbox(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	if _, err := runWithHost(t, dir, h, "network", "deny", "evil.example"); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !h.ran("sbx policy deny network --sandbox api evil.example") {
+		t.Errorf("never applied the deny; ran %v", h.probes)
+	}
+}
+
+// nono reads its policy when a session starts, so --persist is the only form of
+// this command it can honour, and that is not a failure worth an exit code.
+func TestNetworkAllowOnNonoWithPersistEditsTheConfigAndSaysToRestart(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\n")
+	h := &statusHost{list: `{"sessions": []}`}
+	write(t, dir, ".config/lid/.kit/nono.jsonc", "{}")
+
+	got, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "--persist")
+	if err != nil {
+		t.Fatalf("Execute: %v\n%s", err, got.err)
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); !strings.Contains(body, "pypi.org") {
+		t.Errorf("config missing the host:\n%s", body)
+	}
+	if !strings.Contains(got.err, "lid start") {
+		t.Errorf("never said how to pick the change up:\n%s", got.err)
+	}
+}
+
+func TestNetworkAllowOnNonoWithoutPersistRefuses(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: nono\n")
+	h := &statusHost{list: `{"sessions": []}`}
+	write(t, dir, ".config/lid/.kit/nono.jsonc", "{}")
+
+	_, err := runWithHost(t, dir, h, "network", "allow", "pypi.org")
+
+	if err == nil {
+		t.Fatal("nono reported a runtime policy change it cannot make")
+	}
+	if !strings.Contains(err.Error(), "--persist") {
+		t.Errorf("error = %q, want it to point at --persist", err)
+	}
+}
+
+func TestNetworkRejectsAHostWrittenAsAURL(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	_, err := runWithHost(t, dir, h, "network", "allow", "https://pypi.org")
+
+	if err == nil {
+		t.Fatal("accepted a URL as a host pattern")
+	}
+	if h.ran("sbx policy") {
+		t.Error("pushed a URL at sbx before checking it")
+	}
+}
+
+func TestNetworkChecksHostsBeforeEditingAnything(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	if _, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "https://bad", "--persist"); err == nil {
+		t.Fatal("accepted a batch holding a URL")
+	}
+
+	if body := read(t, filepath.Join(dir, "lid.yaml")); strings.Contains(body, "pypi.org") {
+		t.Errorf("saved half a rejected batch:\n%s", body)
+	}
+	if h.ran("sbx policy") {
+		t.Error("applied half a rejected batch")
+	}
+}
+
+func TestTimedAllowRefusesToBeSaved(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	_, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "--mins", "5", "--persist")
+
+	if err == nil {
+		t.Fatal("accepted --mins with --persist")
+	}
+	if h.ran("sbx policy") {
+		t.Error("applied a rule the flags had already ruled out")
+	}
+}
+
+func TestTimedAllowRefusesAWindowItWillNotWaitOut(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+
+	for _, mins := range []string{"0", "-1", "31"} {
+		_, err := runWithHost(t, dir, h, "network", "allow", "pypi.org", "--mins", mins)
+		if mins == "0" {
+			continue
+		}
+		if err == nil {
+			t.Errorf("--mins %s was accepted", mins)
+		}
+	}
+}
+
+func TestTheCountdownBarStaysOneWidthAsItFills(t *testing.T) {
+	for _, elapsed := range []time.Duration{0, 30 * time.Second, time.Minute, 2 * time.Minute} {
+		bar := countdownBar(elapsed, time.Minute, 24)
+		if got := len([]rune(bar)); got != 24 {
+			t.Errorf("bar for %s is %d runes wide, want 24: %q", elapsed, got, bar)
+		}
+	}
+}
+
+func TestTheCountdownNeverCountsBelowZero(t *testing.T) {
+	if got := formatRemaining(-5 * time.Second); got != "0:00" {
+		t.Errorf("formatRemaining(-5s) = %q, want 0:00", got)
+	}
+	if got := formatRemaining(90 * time.Second); got != "1:30" {
+		t.Errorf("formatRemaining(90s) = %q, want 1:30", got)
+	}
+}
+
+// A timed allow that did not take the rule back again would quietly leave the
+// sandbox more open than the user asked for, which is the whole risk the flag
+// exists to bound.
+func TestATimedAllowTakesTheRuleBackWhenTheWindowEnds(t *testing.T) {
+	previous := countdownTick
+	countdownTick = 5 * time.Millisecond
+	defer func() { countdownTick = previous }()
+
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n")
+	h := &statusHost{list: `[{"id": "abc123", "name": "api", "status": "running"}]`}
+	var out, errBuf bytes.Buffer
+	a := &app.App{
+		Version: "v1.2.3",
+		In:      strings.NewReader(""),
+		Out:     &out,
+		Err:     &errBuf,
+		Cwd:     dir,
+		Host:    backend.Host{LookPath: h.lookPath, Output: h.output, Exec: h.exec},
+	}
+
+	if err := runNetwork(a, backend.NetworkAllow, []string{"pypi.org"}, false, 10*time.Millisecond); err != nil {
+		t.Fatalf("runNetwork: %v", err)
+	}
+
+	if !h.ran("sbx policy allow network --sandbox api pypi.org") {
+		t.Errorf("never applied the allow; ran %v", h.probes)
+	}
+	if !h.ran("sbx policy rm network --sandbox api --resource pypi.org") {
+		t.Errorf("the allow outlived its window; ran %v", h.probes)
+	}
+	if !strings.Contains(errBuf.String(), "pypi.org") {
+		t.Errorf("never said the allow was taken back:\n%s", errBuf.String())
 	}
 }

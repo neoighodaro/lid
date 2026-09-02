@@ -552,6 +552,18 @@ func nonoRemapWarnings(cfg *config.Config) []string {
 	return warnings
 }
 
+func (nono) Network(_ Host, cfg *config.Config, action NetworkAction, _ []string) error {
+	fix := map[NetworkAction]string{
+		NetworkAllow:  "add it to 'network:' there, which 'lid network allow <host> --persist' does, then run 'lid start'",
+		NetworkDeny:   "nono blocks whatever 'network:' does not list, so take it out of there with 'lid network remove <host> --persist', then run 'lid start'",
+		NetworkRemove: "drop it from 'network:' there, which 'lid network remove <host> --persist' does, then run 'lid start'",
+	}[action]
+	return failure.New("nono fixes what a session may reach when the session launches").
+		At(cfg.Ref()).
+		WithFix("%s", fix).
+		Because(ErrNetworkAtLaunch)
+}
+
 func nonoNetworkProfileFor(cfg *config.Config) string {
 	if cfg.NetworkProfile != "" {
 		return cfg.NetworkProfile
