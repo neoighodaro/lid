@@ -436,7 +436,7 @@ func TestSbxBootstrapsTheDashboardShimWhenTheDashboardIsInstalled(t *testing.T) 
 	}
 	// Without this the shim only appears once the plugin's own SessionStart hook
 	// has run, which is after Claude already tried to render the status line.
-	if !f.ran("sbx exec api", "ensure-statusline.mjs", "CLAUDE_PLUGIN_DATA") {
+	if !f.ran("sbx exec -w / api", "ensure-statusline.mjs", "CLAUDE_PLUGIN_DATA") {
 		t.Errorf("the dashboard shim was never bootstrapped\ncalls: %v", f.calls)
 	}
 }
@@ -821,5 +821,88 @@ func TestSbxDoesNotEnterTheSandboxWhenNobodyAskedAboutStaleness(t *testing.T) {
 	}
 	if state.Stale {
 		t.Error("staleness was reported without being probed for")
+	}
+}
+
+// TestLidsOwnCommandsInASandboxNameADirectoryThatAlwaysExists guards the case
+// that made 'lid shell' unusable: a sandbox whose project directory has stopped
+// answering. Without -w the runtime calls getcwd on the directory the sandbox
+// starts in, which is the project, and refuses the command outright — so even
+// reading a settings file under $HOME fails. Naming a directory makes it chdir
+// instead, which resolves afresh and works.
+func TestLidsOwnCommandsInASandboxNameADirectoryThatAlwaysExists(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nworkspace: /workspace/api\nclaude:\n  plugins:\n    install:\n      - claude-dashboard@claude-dashboard\n")
+
+	housekeeping := map[string][]string{
+		"reading the agent's settings": sbxReadSettingsArgv(cfg),
+		"writing a file into the home": sbxWriteHomeFileArgv(cfg, ".lid-shellrc", "body"),
+		"recording the config hash":    sbxHashArgv(cfg, "abc"),
+		"bootstrapping the dashboard":  sbxDashboardShimArgv(cfg, "claude-dashboard"),
+		"reading the config hash":      sbxReadHashArgv(cfg),
+	}
+	for what, argv := range housekeeping {
+		if !namesWorkingDir(argv) {
+			t.Errorf("%s runs without -w, so it fails outright once the project directory stops answering: %v", what, argv)
+		}
+	}
+
+	f := &sbxFake{}
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range f.calls {
+		if len(call) > 1 && call[0] == "sbx" && call[1] == "exec" && !namesWorkingDir(call) && !isOnCreateScript(call) {
+			t.Errorf("provisioning runs a command without -w: %v", call)
+		}
+	}
+}
+
+// namesWorkingDir reports whether an argv tells the runtime which directory to
+// run in rather than leaving it to inherit the sandbox's own.
+func namesWorkingDir(argv []string) bool {
+	for _, arg := range argv {
+		if arg == "-w" {
+			return true
+		}
+	}
+	return false
+}
+
+// isOnCreateScript spots the one thing lid runs that does want the project
+// directory: a script the user wrote, which expects to start where its project
+// is.
+func isOnCreateScript(argv []string) bool {
+	for _, arg := range argv {
+		if arg == "-lc" {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAFailedCommandInASandboxDoesNotClaimTheSandboxIsDown covers a fix that
+// used to be a guess. lid cannot tell a sandbox that is down from one that
+// refused the command, and saying the wrong one sends whoever reads it after
+// the wrong thing while the runtime's own explanation sits right above.
+func TestAFailedCommandInASandboxDoesNotClaimTheSandboxIsDown(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\n")
+	h := Host{
+		LookPath: func(name string) (string, error) { return "/usr/local/bin/" + name, nil },
+		Output: func(argv []string) ([]byte, error) {
+			return []byte("OCI runtime exec failed: getcwd: Operation not permitted"), errors.New("exit status 1")
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	}
+
+	_, err := Get(config.BackendSbx).ShellArgv(h, cfg, "", nil)
+	if err == nil {
+		t.Fatal("a sandbox that refused the command is reported as fine")
+	}
+	if !strings.Contains(err.Error(), "getcwd") {
+		t.Errorf("the runtime's own explanation is dropped: %v", err)
+	}
+	if strings.Contains(err.Error(), "has to be running") {
+		t.Errorf("lid still asserts a cause it cannot know: %v", err)
 	}
 }

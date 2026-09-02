@@ -10,6 +10,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/failure"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
 
@@ -39,7 +40,7 @@ type App struct {
 }
 
 func New(version, commit, date string) (*App, error) {
-	cwd, err := os.Getwd()
+	cwd, err := workingDir(os.Getwd)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +54,16 @@ func New(version, commit, date string) (*App, error) {
 		Cwd:     cwd,
 		Zellij:  zellij.New(),
 	}, nil
+}
+
+func workingDir(getwd func() (string, error)) (string, error) {
+	cwd, err := getwd()
+	if err != nil {
+		return "", failure.New("cannot tell which directory this is").
+			WithFix("this shell's directory stopped answering: a sandbox dropped it from the cache behind its shared mount, or it was removed; cd into the project again by its full path to pick it up, and open a new shell if that fails").
+			Because(err)
+	}
+	return cwd, nil
 }
 
 func (a *App) SandboxHost() backend.Host {

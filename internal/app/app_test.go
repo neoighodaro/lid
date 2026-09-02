@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+
+	"github.com/neoighodaro/lid/internal/failure"
 )
 
 func newTestApp(cwd string) *App {
@@ -142,5 +145,41 @@ func TestLaunchGivesTheCommandTheAppsStreams(t *testing.T) {
 
 	if got := out.String(); got != "ping\n" {
 		t.Errorf("stdout = %q, want the piped stdin echoed back", got)
+	}
+}
+
+// TestADirectoryThatStoppedAnsweringSaysSoRatherThanComplainingAboutPermissions
+// covers the shell a sandbox has stranded: it can still read files by name, so
+// the only sign is that it can no longer say where it is. The bare error names
+// no path and blames permissions, which sends whoever reads it after the wrong
+// thing entirely.
+func TestADirectoryThatStoppedAnsweringSaysSoRatherThanComplainingAboutPermissions(t *testing.T) {
+	_, err := workingDir(func() (string, error) { return "", syscall.EPERM })
+	if err == nil {
+		t.Fatal("a working directory that cannot be read is reported as fine")
+	}
+
+	var f *failure.Error
+	if !errors.As(err, &f) {
+		t.Fatalf("the error is not one lid can render a fix for: %v", err)
+	}
+	if !strings.Contains(f.Fix, "cd into the project again") {
+		t.Errorf("the fix does not say what to do about it: %q", f.Fix)
+	}
+	if strings.Contains(f.Error(), "permission") {
+		t.Errorf("the message still blames permissions: %q", f.Error())
+	}
+	if !errors.Is(err, syscall.EPERM) {
+		t.Error("the underlying cause is lost, so nothing can tell this apart from any other failure")
+	}
+}
+
+func TestNewReportsTheDirectoryItIsRunningIn(t *testing.T) {
+	cwd, err := workingDir(func() (string, error) { return "/somewhere", nil })
+	if err != nil {
+		t.Fatalf("workingDir: %v", err)
+	}
+	if cwd != "/somewhere" {
+		t.Errorf("workingDir = %q, want /somewhere", cwd)
 	}
 }

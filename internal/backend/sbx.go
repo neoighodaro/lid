@@ -139,7 +139,7 @@ func sbxApplySettings(h Host, cfg *config.Config) error {
 	current, err := h.output(sbxReadSettingsArgv(cfg))
 	if err != nil {
 		return failure.New("cannot read the agent's settings in the %s sandbox: %s", cfg.Name, firstLine(current)).
-			WithFix("the sandbox has to be running for lid to configure the agent in it")
+			WithFix(sbxExecFix)
 	}
 
 	body, changed, err := applySettings(current, want)
@@ -222,7 +222,7 @@ func (sbx) ShellArgv(h Host, cfg *config.Config, _ string, command []string) ([]
 
 	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
 		return nil, failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
-			WithFix("the sandbox has to be running for lid to open a shell in it")
+			WithFix(sbxExecFix)
 	}
 	return []string{"sbx", "exec", "-it", "-w", dir, cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
 }
@@ -266,7 +266,7 @@ func sbxSteps(cfg *config.Config) [][]string {
 
 	if cfg.Workspace != "" {
 		link := fmt.Sprintf("mkdir -p %q && ln -sfn %q %q", filepath.Dir(cfg.Workspace), cfg.ProjectDir, cfg.Workspace)
-		steps = append(steps, []string{"sbx", "exec", "-u", "root", cfg.Name, "--", "bash", "-c", link})
+		steps = append(steps, []string{"sbx", "exec", "-u", "root", "-w", sbxSelfDir, cfg.Name, "--", "bash", "-c", link})
 	}
 
 	if marketplace := dashboardMarketplace(cfg); marketplace != "" {
@@ -303,7 +303,7 @@ hook="$root/hooks/ensure-statusline.mjs"
 [ -n "$root" ] && [ -f "$hook" ] || exit 0
 CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PLUGIN_DATA=%q node "$hook" || true
 `, cache, data)
-	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", script}
+	return sbxSelfArgv(cfg, script)
 }
 
 func sbxNetworkAllow(cfg *config.Config) []string {
@@ -351,9 +351,31 @@ func sbxCreateArgv(cfg *config.Config) []string {
 	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
 }
 
+// sbxSelfDir is where lid runs its own commands in a sandbox. Everything lid
+// does for itself works in absolute paths, while the directory a sandbox starts
+// in is the project: not mounted yet while one is being created, and no longer
+// answering once the guest drops it from the cache behind a shared mount. Naming
+// a directory also keeps the runtime off getcwd, which is the call that fails in
+// both cases, so lid can still configure an agent and open a shell either way.
+const sbxSelfDir = "/"
+
+// sbxExecFix is what to say when a command lid ran in a sandbox came back with
+// an error of its own. lid cannot tell a sandbox that is down from one that
+// refused the command, so it points at the check and leaves the runtime's own
+// words to say the rest.
+const sbxExecFix = "'lid status' says whether the sandbox is up; if it is, the line above is why the command could not run in it"
+
+func sbxReadHashArgv(cfg *config.Config) []string {
+	return []string{"sbx", "exec", "-w", sbxSelfDir, cfg.Name, "--", "cat", sbxConfigHash}
+}
+
+func sbxSelfArgv(cfg *config.Config, script string) []string {
+	return []string{"sbx", "exec", "-w", sbxSelfDir, cfg.Name, "--", "bash", "-c", script}
+}
+
 func sbxReadSettingsArgv(cfg *config.Config) []string {
 	read := fmt.Sprintf("cat %q 2>/dev/null || true", "$HOME/"+claudeSettingsFile)
-	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", read}
+	return sbxSelfArgv(cfg, read)
 }
 
 func sbxWriteHomeFileArgv(cfg *config.Config, rel, body string) []string {
@@ -365,12 +387,12 @@ cat > %q <<'LID_FILE'
 LID_FILE
 mv %q %q
 `, filepath.Dir(path), path+".lid", strings.TrimRight(body, "\n"), path+".lid", path)
-	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", script}
+	return sbxSelfArgv(cfg, script)
 }
 
 func sbxHashArgv(cfg *config.Config, hash string) []string {
 	write := fmt.Sprintf("printf %%s %q > %s", hash, sbxConfigHash)
-	return []string{"sbx", "exec", cfg.Name, "--", "bash", "-c", write}
+	return sbxSelfArgv(cfg, write)
 }
 
 func sbxImage(cfg *config.Config) string {
@@ -398,7 +420,7 @@ func sbxExists(h Host, cfg *config.Config) bool {
 }
 
 func sbxCurrentHash(h Host, cfg *config.Config) (string, error) {
-	out, err := h.output([]string{"sbx", "exec", cfg.Name, "--", "cat", sbxConfigHash})
+	out, err := h.output(sbxReadHashArgv(cfg))
 	if err != nil {
 		return "", err
 	}

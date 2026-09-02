@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,4 +159,44 @@ func TestASuccessfulCheckRemembersTheVersionItFound(t *testing.T) {
 	if state := LoadState(path); state.LatestVersion != "v9.9.9" {
 		t.Errorf("LatestVersion = %q, want the tag github reported", state.LatestVersion)
 	}
+}
+
+// TestTheBackgroundCheckDoesNotSitInTheDirectoryItWasStartedFrom points Spawn at
+// a script that records where it ran. The check outlives the shell that started
+// it, and a sandbox that drops the cache behind its shared mount strands any
+// process still holding a directory on it, so the check must not hold one.
+func TestTheBackgroundCheckDoesNotSitInTheDirectoryItWasStartedFrom(t *testing.T) {
+	here, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if here == "/" {
+		t.Skip("the test already runs from the root, so it cannot tell the two apart")
+	}
+
+	dir := t.TempDir()
+	record := filepath.Join(dir, "cwd")
+	script := filepath.Join(dir, "fake")
+	body := "#!/bin/sh\nif [ \"$1\" = \"" + CheckCommand + "\" ]; then pwd > \"" + record + "\"; fi\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Spawn(script); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(record)
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		if got := strings.TrimSpace(string(data)); got != "/" {
+			t.Fatalf("the background check ran from %q, so it holds a directory it never reads", got)
+		}
+		return
+	}
+	t.Fatal("the background check never ran")
 }
