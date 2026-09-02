@@ -3,13 +3,16 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
@@ -22,6 +25,8 @@ import (
 // its whole window, so a long one is a session the user cannot use.
 const maxAllowMinutes = 30
 
+// countdownWidth is the widest the bar gets. A narrow terminal shrinks it,
+// since a countdown that wraps cannot be redrawn in place.
 const countdownWidth = 24
 
 // countdownTick is how often the countdown redraws and re-checks the deadline.
@@ -113,7 +118,33 @@ func checkTimedAllow(minutes int, persist bool) error {
 	return nil
 }
 
+// checkShellExpanded turns back a pattern the shell expanded before lid saw it.
+// A host that is also the name of a file in the directory the command was run
+// from is almost certainly what a bare '*' became on the way here, and letting
+// it through writes one firewall rule per file.
+func checkShellExpanded(dir string, domains []string) error {
+	var files []string
+	for _, domain := range domains {
+		if _, err := os.Lstat(filepath.Join(dir, domain)); err == nil {
+			files = append(files, domain)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+
+	named := "names a file here, not a host"
+	if len(files) > 1 {
+		named = "name files here, not hosts"
+	}
+	return failure.New("%s %s", strings.Join(files, ", "), named).
+		WithFix("your shell expanded a pattern before lid saw it; quote it, as in: lid network allow '*.example.com'")
+}
+
 func runNetwork(a *app.App, action backend.NetworkAction, domains []string, persist bool, window time.Duration) error {
+	if err := checkShellExpanded(a.Cwd, domains); err != nil {
+		return err
+	}
 	for _, domain := range domains {
 		if err := config.ValidateDomain(domain); err != nil {
 			return err
@@ -272,11 +303,51 @@ func awaitRevert(a *app.App, b backend.Backend, cfg *config.Config, domains []st
 }
 
 func drawCountdown(a *app.App, listed string, elapsed, total time.Duration) {
-	fmt.Fprint(a.Err, "\r\033[K"+ui.Err.Accent.Render(countdownLine(listed, elapsed, total, countdownWidth)))
+	fmt.Fprint(a.Err, "\r\033[K"+ui.Err.Accent.Render(countdownLine(listed, elapsed, total, terminalWidth(a.Err))))
 }
 
+// countdownLine leads with the time left and trails with the hosts, then cuts
+// itself to the width of the terminal. A line that wraps cannot be redrawn in
+// place, because the carriage return only reaches the start of the last row,
+// so what is worth reading has to come before what gets cut.
 func countdownLine(listed string, elapsed, total time.Duration, width int) string {
-	return fmt.Sprintf("%s  [%s] %s left", listed, countdownBar(elapsed, total, width), formatRemaining(total-elapsed))
+	bar := countdownWidth
+	if bar*2 > width {
+		bar = width / 3
+	}
+	if bar < 1 {
+		bar = 1
+	}
+	line := fmt.Sprintf("%s left  [%s]  %s", formatRemaining(total-elapsed), countdownBar(elapsed, total, bar), listed)
+	return clampLine(line, width)
+}
+
+// clampLine cuts a line to width columns, marking where it was cut.
+func clampLine(line string, width int) string {
+	runes := []rune(line)
+	if width < 1 || len(runes) <= width {
+		return line
+	}
+	if width == 1 {
+		return "\u2026"
+	}
+	return string(runes[:width-1]) + "\u2026"
+}
+
+// terminalWidth is how many columns the countdown has to stay inside, one short
+// of the real width so drawing the last column never wraps on its own.
+func terminalWidth(w io.Writer) int {
+	const assumed = 80
+
+	file, ok := w.(*os.File)
+	if !ok {
+		return assumed
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil || width < 2 {
+		return assumed
+	}
+	return width - 1
 }
 
 // countdownBar fills as elapsed approaches total, and is always exactly width

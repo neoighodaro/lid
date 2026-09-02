@@ -2111,3 +2111,71 @@ func TestRestartLeavesTheRestOfStdinForTheSessionItLaunches(t *testing.T) {
 		t.Errorf("stdin left holding %q, want the answer read and nothing more", left)
 	}
 }
+
+func TestNetworkRefusesHostsTheShellExpandedFromAPattern(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	write(t, dir, "package.json", "{}\n")
+	h := &statusHost{list: `[{"name": "api", "status": "running"}]`}
+
+	_, err := runWithHost(t, dir, h, "network", "allow", "package.json", "lid.yaml")
+
+	if err == nil {
+		t.Fatalf("a directory listing was turned into firewall rules: %v", h.probes)
+	}
+	for _, want := range []string{"package.json", "lid.yaml", "quote"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	if h.ran("policy allow") {
+		t.Errorf("rules were written before the pattern was caught: %v", h.probes)
+	}
+}
+
+func TestNetworkStillAllowsAHostThatIsNotAFileHere(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &statusHost{list: `[{"name": "api", "status": "running"}]`}
+
+	if _, err := runWithHost(t, dir, h, "network", "allow", "pypi.org"); err != nil {
+		t.Fatalf("network allow: %v", err)
+	}
+	if !h.ran("policy allow network --sandbox api pypi.org") {
+		t.Errorf("the host never reached sbx: %v", h.probes)
+	}
+}
+
+func TestTheCountdownNeverOutgrowsTheTerminalItRedrawsIn(t *testing.T) {
+	hosts := strings.Repeat("some-long-host.example.com, ", 12)
+
+	for _, width := range []int{20, 40, 80, 120} {
+		line := countdownLine(hosts, 30*time.Second, time.Minute, width)
+		if got := len([]rune(line)); got > width {
+			t.Errorf("width %d: line is %d columns, so it wraps and cannot be redrawn in place:\n%s", width, got, line)
+		}
+		if !strings.HasPrefix(line, "0:30 left") {
+			t.Errorf("width %d: line = %q, want the time left before anything that gets cut", width, line)
+		}
+		if !strings.Contains(line, "]") {
+			t.Errorf("width %d: line = %q, want a bar narrow enough to close inside the terminal", width, line)
+		}
+	}
+}
+
+func TestTheCountdownAssumesAnOrdinaryWidthWhenNothingCanBeAsked(t *testing.T) {
+	if got := terminalWidth(&bytes.Buffer{}); got != 80 {
+		t.Errorf("terminalWidth off a terminal = %d, want a width the countdown can still fit in", got)
+	}
+}
+
+func TestTheCountdownKeepsTheWholeLineWhenItFits(t *testing.T) {
+	line := countdownLine("pypi.org", 30*time.Second, time.Minute, 200)
+
+	if !strings.Contains(line, "pypi.org") {
+		t.Errorf("line = %q, want the hosts kept when there is room for them", line)
+	}
+	if strings.Contains(line, "…") {
+		t.Errorf("line = %q, want no cut marker on a line that fits", line)
+	}
+}
