@@ -217,3 +217,34 @@ func TestEditingABrokenConfigLeavesItUntouched(t *testing.T) {
 		t.Errorf("config was rewritten despite the parse failing:\n%s", body)
 	}
 }
+
+func TestAddNetworkDomainsWritesThroughASymlinkedConfig(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "shared.yaml")
+	if err := os.WriteFile(real, []byte("name: api\nnetwork:\n  - example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "lid.yaml")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := AddNetworkDomains(link, []string{"pypi.org"}); err != nil {
+		t.Fatalf("AddNetworkDomains: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symlink was replaced by a file of its own, so the shared config no longer feeds this project")
+	}
+	body, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "pypi.org") {
+		t.Errorf("the host never reached the file the link points at:\n%s", body)
+	}
+}

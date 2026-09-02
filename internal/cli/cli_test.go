@@ -1091,9 +1091,11 @@ func TestInitNamesTheUnknownBackendRatherThanAFlagItRejects(t *testing.T) {
 // sandbox somebody may already be working in.
 type sbxStartHost struct {
 	sandbox  string
+	list     string
 	hash     string
 	settings string
 	paneID   string
+	stdin    io.Reader
 	probes   [][]string
 	argv     []string
 }
@@ -1119,6 +1121,8 @@ func (h *sbxStartHost) output(argv []string) ([]byte, error) {
 	h.probes = append(h.probes, argv)
 	line := strings.Join(argv, " ")
 	switch {
+	case strings.Contains(line, "sbx ls --json"):
+		return []byte(h.list), nil
 	case strings.Contains(line, "sbx ls"):
 		return []byte(h.sandbox + "\n"), nil
 	case strings.Contains(line, ".lid-config-hash"):
@@ -1154,9 +1158,13 @@ func (h *sbxStartHost) ran(fragment string) bool {
 func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) result {
 	t.Helper()
 	var out, errBuf bytes.Buffer
+	var stdin io.Reader = strings.NewReader("")
+	if h.stdin != nil {
+		stdin = h.stdin
+	}
 	a := &app.App{
 		Version: "v1.2.3",
-		In:      strings.NewReader(""),
+		In:      stdin,
 		Out:     &out,
 		Err:     &errBuf,
 		Cwd:     cwd,
@@ -1994,5 +2002,112 @@ func TestATimedAllowTakesTheRuleBackWhenTheWindowEnds(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "pypi.org") {
 		t.Errorf("never said the allow was taken back:\n%s", errBuf.String())
+	}
+}
+
+func restartHost(t *testing.T, stdin string) (string, *sbxStartHost) {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	return dir, &sbxStartHost{
+		sandbox:  "api",
+		list:     `[{"id": "abc123", "name": "api", "status": "running"}]`,
+		hash:     "built-from-an-older-config",
+		settings: "{}",
+		stdin:    strings.NewReader(stdin),
+	}
+}
+
+func TestRestartReplacesTheSandboxWhenTheAnswerIsYes(t *testing.T) {
+	dir, h := restartHost(t, "y\n")
+
+	runSbxStart(t, dir, h, "restart")
+
+	if !h.ran("sbx rm") {
+		t.Errorf("a confirmed restart left the old sandbox in place: %v", h.probes)
+	}
+	if strings.Join(h.argv, " ") != "sbx run --name api" {
+		t.Errorf("launched %v, want the agent started in the replacement", h.argv)
+	}
+}
+
+func TestRestartLeavesTheSandboxWhereItWasWhenTheAnswerIsNo(t *testing.T) {
+	dir, h := restartHost(t, "n\n")
+
+	res := runSbxStart(t, dir, h, "restart")
+
+	if h.ran("sbx rm") {
+		t.Errorf("answering no destroyed the sandbox anyway: %v", h.probes)
+	}
+	if h.argv != nil {
+		t.Errorf("launched %v, want nothing started after declining", h.argv)
+	}
+	if !strings.Contains(res.err, "Left the api sandbox where it was") {
+		t.Errorf("nothing says the sandbox survived:\n%s", res.err)
+	}
+}
+
+func TestRestartSaysWhatIsAboutToBeDestroyedBeforeAsking(t *testing.T) {
+	dir, h := restartHost(t, "n\n")
+
+	res := runSbxStart(t, dir, h, "restart")
+
+	for _, want := range []string{"api", "destroys", "Continue? [y/N]"} {
+		if !strings.Contains(res.err, want) {
+			t.Errorf("the question is missing %q:\n%s", want, res.err)
+		}
+	}
+}
+
+func TestRestartWithNothingOnStdinLeavesTheSandboxStanding(t *testing.T) {
+	dir, h := restartHost(t, "")
+
+	runSbxStart(t, dir, h, "restart")
+
+	if h.ran("sbx rm") {
+		t.Errorf("a restart nobody could answer destroyed the sandbox: %v", h.probes)
+	}
+}
+
+func TestRestartForceReplacesTheSandboxWithoutAsking(t *testing.T) {
+	dir, h := restartHost(t, "")
+
+	res := runSbxStart(t, dir, h, "restart", "--force")
+
+	if !h.ran("sbx rm") {
+		t.Errorf("--force did not replace the sandbox: %v", h.probes)
+	}
+	if strings.Contains(res.err, "Continue?") {
+		t.Errorf("--force asked anyway:\n%s", res.err)
+	}
+}
+
+func TestRestartDoesNotAskWhenThereIsNoSandboxToDestroy(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\n")
+	h := &sbxStartHost{list: "[]", settings: "{}", stdin: strings.NewReader("")}
+
+	res := runSbxStart(t, dir, h, "restart")
+
+	if strings.Contains(res.err, "Continue?") {
+		t.Errorf("asked before destroying a sandbox that is not there:\n%s", res.err)
+	}
+	if !h.ran("sbx create") {
+		t.Errorf("no sandbox was created: %v", h.probes)
+	}
+}
+
+func TestRestartLeavesTheRestOfStdinForTheSessionItLaunches(t *testing.T) {
+	dir, h := restartHost(t, "y\nthe agent's first keystrokes")
+	rest := h.stdin.(*strings.Reader)
+
+	runSbxStart(t, dir, h, "restart")
+
+	left, err := io.ReadAll(rest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(left) != "the agent's first keystrokes" {
+		t.Errorf("stdin left holding %q, want the answer read and nothing more", left)
 	}
 }

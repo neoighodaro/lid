@@ -87,8 +87,13 @@ func editNetwork(path string, add, remove []string) error {
 
 // replaceFile swaps in the new body through a temporary file in the same
 // directory, so a config the user hand-wrote is never left half-written when
-// the disk fills or the process dies mid-save.
+// the disk fills or the process dies mid-save. Renaming would replace a
+// symlinked config with a file of its own, so it writes to whatever the link
+// points at instead.
 func replaceFile(path string, body []byte, mode os.FileMode) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
