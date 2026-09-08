@@ -198,6 +198,7 @@ type Config struct {
 	BaseImage      string            `yaml:"base_image"`
 	Template       string            `yaml:"template"`
 	Workspace      string            `yaml:"workspace"`
+	Clone          bool              `yaml:"clone"`
 	Packages       []string          `yaml:"packages"`
 	Runtimes       map[string]Scalar `yaml:"runtimes"`
 	Ports          []Scalar          `yaml:"ports"`
@@ -452,6 +453,7 @@ func (c *Config) validateBackendExclusions() error {
 		{"base_image", c.BaseImage != "", "a nono session is a host process, not a container"},
 		{"template", c.Template != "", "a nono session is a host process, not a container"},
 		{"packages", len(c.Packages) > 0, "install them on your host yourself"},
+		{"clone", c.Clone, "a nono session works in the project itself, so there is nothing to clone into"},
 	} {
 		if conflict.set {
 			return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).WithFix("%s, or switch to the %s backend", conflict.why, BackendSbx)

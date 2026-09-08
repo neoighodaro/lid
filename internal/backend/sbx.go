@@ -328,6 +328,15 @@ func sbxNetworkAllow(cfg *config.Config) []string {
 func sbxCreateArgv(cfg *config.Config) []string {
 	argv := []string{"sbx", "create", "--template", sbxImage(cfg), "--name", cfg.Name}
 
+	// A clone puts the project on the sandbox's own ext4 volume at the same
+	// path, rather than sharing the host's copy over virtiofs. The guest can
+	// invalidate a virtiofs dentry it still holds, and once it does, getcwd
+	// fails for good: bash, git and node all refuse to run in a directory the
+	// kernel now calls deleted, and only a restart brings the mount back.
+	if cfg.Clone {
+		argv = append(argv, "--clone")
+	}
+
 	env, err := cfg.ResolvedEnv()
 	if err != nil {
 		env = map[string]string{}

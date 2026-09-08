@@ -138,6 +138,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 	write(t, dir, "lid.yaml", strings.Join([]string{
 		"name: demo",
 		"workspace: /workspace",
+		"clone: true",
 		"runtimes:\n  php: \"8.5\"",
 		"php:\n  extensions: [imagick]",
 		"ports: [\"8080:80\"]",
@@ -159,7 +160,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 		t.Fatalf("Execute: %v (stderr: %s)", err, got.err)
 	}
 	for _, want := range []string{
-		"workspace", "php.extensions", "ports", "env_file", "network",
+		"workspace", "clone", "php.extensions", "ports", "env_file", "network",
 		"scripts.on_create", "scripts.on_start", "handoff", "bridges",
 		"shell.directory", "shell.aliases", "claude.theme",
 		"claude.marketplaces", "claude.install", "claude.settings",

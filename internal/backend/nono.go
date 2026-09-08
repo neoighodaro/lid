@@ -220,7 +220,68 @@ func nonoCreatedMarker(cfg *config.Config) string {
 }
 
 func (nono) PrepareAgent(h Host, cfg *config.Config) error {
-	return errors.Join(nonoRunOnCreate(h, cfg), nonoRunOnStart(h, cfg))
+	return errors.Join(nonoApplyClaudeSettings(cfg), nonoRunOnCreate(h, cfg), nonoRunOnStart(h, cfg))
+}
+
+// nonoApplyClaudeSettings merges the claude: block into the project's own
+// settings file. nono runs the agent under the user's real home, so the global
+// settings there are not lid's to rewrite; the project-local file is, and the
+// config lid was given wins over what the file already says. lid merges into
+// that file only when the project already keeps one - creating it would be lid
+// deciding a project should have settings it never asked for.
+func nonoApplyClaudeSettings(cfg *config.Config) error {
+	if !config.IsClaudeAgent(cfg.Agent) {
+		return nil
+	}
+	want := claudeHostSettings(cfg)
+	if len(want) == 0 {
+		return nil
+	}
+
+	path := nonoLocalSettingsPath(cfg)
+	current, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return failure.New("cannot read the agent's settings for this project").
+			At(path).
+			WithFix("%v", err)
+	}
+
+	body, changed, err := applySettings(string(current), want)
+	if err != nil || !changed {
+		return err
+	}
+	return writeBeside(path, []byte(body+"\n"))
+}
+
+func nonoLocalSettingsPath(cfg *config.Config) string {
+	return filepath.Join(cfg.ProjectDir, claudeLocalSettingsFile)
+}
+
+// nonoAppliesClaude reports whether the claude: block has somewhere to land.
+func nonoAppliesClaude(cfg *config.Config) bool {
+	if !config.IsClaudeAgent(cfg.Agent) || len(claudeHostSettings(cfg)) == 0 {
+		return false
+	}
+	_, err := os.Stat(nonoLocalSettingsPath(cfg))
+	return err == nil
+}
+
+// nonoClaudeWarnings says what became of the claude: block, which lands in one
+// file or nowhere at all.
+func nonoClaudeWarnings(cfg *config.Config) []string {
+	if !cfg.Claude.IsSet() {
+		return nil
+	}
+	if !nonoAppliesClaude(cfg) {
+		return []string{fmt.Sprintf("ignoring claude: a nono session runs on your host, and this project has no %s to merge into", claudeLocalSettingsFile)}
+	}
+	if claudeThemeID(cfg) == customClaudeTheme {
+		return []string{"ignoring claude.theme: a nono session reads its themes from your own ~/.claude"}
+	}
+	return nil
 }
 
 func nonoRunOnCreate(h Host, cfg *config.Config) error {
@@ -374,12 +435,12 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 	warnings := nonoUnblockWarnings(cfg)
 	warnings = append(warnings, nonoRemapWarnings(cfg)...)
 	warnings = append(warnings, handoffAgentWarning(cfg)...)
+	warnings = append(warnings, nonoClaudeWarnings(cfg)...)
 	for _, group := range []struct {
 		why    string
 		fields []field
 	}{
 		{"a nono session runs on your host", []field{
-			{"claude", cfg.Claude.IsSet()},
 			{"memory", cfg.Memory != ""},
 			{"php.extensions", len(cfg.PHP.Extensions) > 0},
 			{"workspace", cfg.Workspace != ""},

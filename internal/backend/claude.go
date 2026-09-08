@@ -34,9 +34,14 @@ var claudeThemes = []string{
 	"light-daltonized",
 }
 
+// claudeLocalSettingsFile is the settings file a project keeps for itself,
+// which is the only one lid writes when the agent runs in the user's own home.
+const claudeLocalSettingsFile = ".claude/settings.local.json"
+
 const (
-	claudeThemeName = "lid"
-	claudeThemeFile = ".claude/themes/" + claudeThemeName + ".json"
+	claudeThemeName   = "lid"
+	claudeThemeFile   = ".claude/themes/" + claudeThemeName + ".json"
+	customClaudeTheme = "custom:" + claudeThemeName
 )
 
 func claudeThemeID(cfg *config.Config) string {
@@ -46,12 +51,12 @@ func claudeThemeID(cfg *config.Config) string {
 	case contains(claudeThemes, cfg.Claude.Theme):
 		return cfg.Claude.Theme
 	default:
-		return "custom:" + claudeThemeName
+		return customClaudeTheme
 	}
 }
 
 func claudeThemeBody(cfg *config.Config) (string, error) {
-	if claudeThemeID(cfg) != "custom:"+claudeThemeName {
+	if claudeThemeID(cfg) != customClaudeTheme {
 		return "", nil
 	}
 	path := cfg.Claude.Theme
@@ -73,8 +78,24 @@ func claudeThemeBody(cfg *config.Config) (string, error) {
 }
 
 func claudeSettings(cfg *config.Config) map[string]any {
+	return claudeSettingsWithTheme(cfg, claudeThemeID(cfg))
+}
+
+// claudeHostSettings is the part of the claude: block lid can honour when the
+// agent runs under the user's own home rather than in an image lid built. A
+// custom theme is a file lid writes into the sandbox's ~/.claude/themes, and
+// that home is the user's own, so the theme is left as they have it.
+func claudeHostSettings(cfg *config.Config) map[string]any {
+	theme := claudeThemeID(cfg)
+	if theme == customClaudeTheme {
+		theme = ""
+	}
+	return claudeSettingsWithTheme(cfg, theme)
+}
+
+func claudeSettingsWithTheme(cfg *config.Config, theme string) map[string]any {
 	want := map[string]any{}
-	if theme := claudeThemeID(cfg); theme != "" {
+	if theme != "" {
 		want["theme"] = theme
 		want["themeId"] = theme
 	}
@@ -107,8 +128,8 @@ func mergeSettings(dst, src map[string]any) map[string]any {
 
 func applySettings(current string, want map[string]any) (string, bool, error) {
 	existing := map[string]any{}
-	if trimmed := strings.TrimSpace(current); trimmed != "" {
-		if err := json.Unmarshal([]byte(trimmed), &existing); err != nil {
+	if body := jsonBody(current); body != "" {
+		if err := decodeJSON(body, &existing); err != nil {
 			return "", false, failure.New("the agent's settings in the sandbox are not valid JSON, so lid will not overwrite them").
 				WithFix("open a shell in the sandbox and fix ~/.claude/settings.json, or rebuild with 'lid start --rebuild'")
 		}

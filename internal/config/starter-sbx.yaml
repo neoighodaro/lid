@@ -12,6 +12,14 @@ backend: sbx
 # the project stays reachable at the host path either way.
 # workspace: /workspace
 
+# Work on a git clone kept on the sandbox's own disk instead of sharing the
+# host's copy. The project keeps the same path, but the agent's commits come
+# back over the 'sandbox-<name>' git remote rather than appearing in your
+# editor. Worth it when a dev server churns files: the shared mount can go
+# stale under load, and after that nothing in the sandbox can read its own
+# working directory until the sandbox restarts.
+# clone: true
+
 # Custom template image, which skips Dockerfile generation. When set,
 # 'packages', 'runtimes' and 'bridges' are unavailable - install and wire
 # them up in your own Dockerfile instead.

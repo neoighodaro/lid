@@ -197,7 +197,9 @@ func TestPrepareAgentLeavesNonClaudeAgentsAlone(t *testing.T) {
 	}
 }
 
-func TestPrepareAgentIsANoOpForNono(t *testing.T) {
+// nono merges the claude: block into the project's own settings file, never
+// into the ~/.claude/settings.json the user's own agent reads.
+func TestNonoNeverRewritesTheSettingsInYourOwnHome(t *testing.T) {
 	f := &settingsFake{current: "{}"}
 	cfg := sbxCfg(t, "name: api\nbackend: nono\nclaude:\n  settings:\n    model: claude-opus-5\n")
 
@@ -328,5 +330,20 @@ func TestMemoryIsWrittenByAScriptARealShellAccepts(t *testing.T) {
 	}
 	if strings.TrimSpace(string(data)) != memory {
 		t.Errorf("memory = %q, want %q", data, memory)
+	}
+}
+
+func TestSettingsSurviveAnUpdateNoticePrintedAheadOfThem(t *testing.T) {
+	current := "  update 1.4.0 available (current: 1.3.0)\n{\n  \"theme\": \"dark\"\n}\n"
+
+	body, changed, err := applySettings(current, map[string]any{"themeId": "lid"})
+	if err != nil {
+		t.Fatalf("applySettings: %v", err)
+	}
+	if !changed {
+		t.Fatal("want the settings rewritten with the new key")
+	}
+	if !strings.Contains(body, `"theme": "dark"`) {
+		t.Fatalf("got %q, want the theme the sandbox already had kept", body)
 	}
 }

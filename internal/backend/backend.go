@@ -3,6 +3,9 @@ package backend
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -93,14 +96,69 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-func parseList[T any](out, command, key string) ([]T, error) {
+// jsonBody drops whatever a tool printed around its JSON. A CLI is free to
+// announce a new release, or warn about something, on the stream the data comes
+// down: the payload starts at the first line that opens an array or an object,
+// and a decoder reading from there stops at the end of it.
+func jsonBody(out string) string {
 	body := strings.TrimSpace(out)
+	for offset := 0; offset < len(body); {
+		line := body[offset:]
+		if end := strings.IndexByte(line, '\n'); end >= 0 {
+			line = line[:end]
+		}
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+			return body[offset:]
+		}
+		offset += len(line) + 1
+	}
+	return body
+}
+
+func decodeJSON(body string, into any) error {
+	return json.NewDecoder(strings.NewReader(body)).Decode(into)
+}
+
+// writeBeside replaces a file the user owns through a temporary one in the same
+// directory, so a settings file lid only meant to add a key to is never left
+// half-written. The file's own permissions are kept.
+func writeBeside(path string, body []byte) error {
+	mode := fs.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return failure.New("cannot write next to %s", path).WithFix("%v", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		return failure.New("cannot write %s", path).WithFix("%v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return failure.New("cannot write %s", path).WithFix("%v", err)
+	}
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
+		return failure.New("cannot write %s", path).WithFix("%v", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return failure.New("cannot write %s", path).WithFix("%v", err)
+	}
+	return nil
+}
+
+func parseList[T any](out, command, key string) ([]T, error) {
+	body := jsonBody(out)
 	if body == "" {
 		return nil, nil
 	}
 
 	var list []T
-	if err := json.Unmarshal([]byte(body), &list); err == nil {
+	if err := decodeJSON(body, &list); err == nil {
 		return list, nil
 	}
 
@@ -108,7 +166,7 @@ func parseList[T any](out, command, key string) ([]T, error) {
 		WithFix("this is a bug in lid, or a version of the tool that has changed its output")
 
 	var wrapped map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &wrapped); err != nil {
+	if err := decodeJSON(body, &wrapped); err != nil {
 		return nil, unreadable
 	}
 

@@ -2,8 +2,9 @@
 #
 # nono runs the agent as a caged host process, so this file describes what the
 # agent may reach on your machine. Keys that describe an image or what lid puts
-# inside one - base_image, template, packages, workspace, bridges, claude,
-# memory - do not apply here.
+# inside one - base_image, template, packages, workspace, bridges, memory - do
+# not apply here. The claude: block does, but only as far as this project's own
+# .claude/settings.local.json: the agent reads your real home, which is yours.
 
 name: {{ .Name }}
 agent: claude-code
@@ -71,6 +72,15 @@ paths:
   # Directories to refuse, even when something above would grant them.
   deny: []
     # - ~/.ssh
+
+# Claude Code settings for this project. lid merges them into the project's
+# .claude/settings.local.json when that file is already there, and its values
+# win over what the file says. lid never creates the file, and never touches
+# the settings in your own home. A custom theme is left out - it lives in
+# ~/.claude/themes, which a nono session reads from you, not from lid.
+claude:
+  settings: {}
+    # alwaysThinkingEnabled: true
 
 # Cross-sandbox questions. Run the broker with 'lid handoff -D', then the agent
 # can ask agents in other sandboxes and answer theirs. A nono session runs in

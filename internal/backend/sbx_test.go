@@ -906,3 +906,25 @@ func TestAFailedCommandInASandboxDoesNotClaimTheSandboxIsDown(t *testing.T) {
 		t.Errorf("lid still asserts a cause it cannot know: %v", err)
 	}
 }
+
+func TestSbxClonesTheProjectIntoTheSandboxWhenAsked(t *testing.T) {
+	f := &sbxFake{}
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\nclone: true\n"), Options{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx create", "--clone") {
+		t.Errorf("the sandbox was not created in clone mode\ncalls: %v", f.calls)
+	}
+}
+
+func TestSbxBindMountsTheProjectUnlessCloneIsAskedFor(t *testing.T) {
+	f := &sbxFake{}
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), sbxCfg(t, "name: api\n"), Options{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if f.ran("sbx create", "--clone") {
+		t.Errorf("the sandbox was cloned without being asked\ncalls: %v", f.calls)
+	}
+}

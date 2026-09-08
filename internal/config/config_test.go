@@ -1351,3 +1351,23 @@ func TestPathsUnderAContainerBackendIsRejectedRatherThanIgnored(t *testing.T) {
 		t.Errorf("error = %q, want it to name paths", err.Error())
 	}
 }
+
+func TestNonoRejectsClone(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: nono\nclone: true\n")
+
+	if err == nil || !strings.Contains(err.Error(), "clone") {
+		t.Errorf("error = %v, want it to name clone", err)
+	}
+}
+
+func TestCloneIsOffUnlessTheConfigAsksForIt(t *testing.T) {
+	if cfg := loadBody(t, "name: lid\n"); cfg.Clone {
+		t.Error("Clone = true, want false: a sandbox bind-mounts the project by default")
+	}
+}
+
+func TestCloneIsReadFromTheConfig(t *testing.T) {
+	if cfg := loadBody(t, "name: lid\nclone: true\n"); !cfg.Clone {
+		t.Error("Clone = false, want true")
+	}
+}

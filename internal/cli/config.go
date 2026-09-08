@@ -60,6 +60,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"base_image", cfg.BaseImage},
 		{"template", cfg.Template},
 		{"workspace", cfg.Workspace},
+		{"clone", boolRow(cfg.Clone)},
 		{"packages", strings.Join(cfg.Packages, ", ")},
 		{"runtimes", joinRuntimes(cfg.Runtimes)},
 		{"php.extensions", strings.Join(cfg.PHP.Extensions, ", ")},
@@ -91,6 +92,15 @@ func configRows(cfg *config.Config) [][2]string {
 		}
 	}
 	return rows
+}
+
+// boolRow renders a flag the way every other row reads: the empty string means
+// the key is unset, which is what keeps it out of the listing.
+func boolRow(on bool) string {
+	if !on {
+		return ""
+	}
+	return "on"
 }
 
 func handoffRow(cfg *config.Config) string {

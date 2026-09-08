@@ -2,6 +2,7 @@ package backend
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -359,14 +360,14 @@ func TestNonoWarningsReadAsSentences(t *testing.T) {
 }
 
 func TestNonoStatesEachReasonOnceInsteadOfPerKey(t *testing.T) {
-	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nclaude:\n  theme: dark\nmemory: notes.md\nworkspace: /workspace/api\n"))
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nmemory: notes.md\nworkspace: /workspace/api\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(warnings) != 1 {
-		t.Fatalf("warnings = %v, want the three keys named once under a shared reason", warnings)
+		t.Fatalf("warnings = %v, want the keys named once under a shared reason", warnings)
 	}
-	for _, key := range []string{"claude", "memory", "workspace"} {
+	for _, key := range []string{"memory", "workspace"} {
 		if !strings.Contains(warnings[0], key) {
 			t.Errorf("warning %q does not name %s", warnings[0], key)
 		}
@@ -811,4 +812,138 @@ func TestNonoGrantsPnpmsGlobalConfigDirectoryAndNotOnlyItsStore(t *testing.T) {
 	if !hasGroup(fs["allow"], "$HOME/.config/pnpm") {
 		t.Errorf("pnpm is declared but its global config directory is denied, so every pnpm command prompts: %v", fs)
 	}
+}
+
+// seedLocalSettings puts a project-local settings file next to the config, the
+// way a project that already keeps one would.
+func seedLocalSettings(t *testing.T, cfg *config.Config, body string) string {
+	t.Helper()
+	path := filepath.Join(cfg.ProjectDir, claudeLocalSettingsFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func localSettings(t *testing.T, path string) map[string]any {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(body, &settings); err != nil {
+		t.Fatalf("settings are not JSON after lid wrote them: %v\n%s", err, body)
+	}
+	return settings
+}
+
+func TestNonoMergesTheClaudeBlockIntoTheProjectsOwnSettings(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  settings:\n    alwaysThinkingEnabled: true\n")
+	path := seedLocalSettings(t, cfg, `{"permissions": {"allow": ["Bash(ls:*)"]}}`)
+
+	if err := Get(config.BackendNono).PrepareAgent(Host{}, cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+
+	settings := localSettings(t, path)
+	if settings["alwaysThinkingEnabled"] != true {
+		t.Errorf("got %v, want the setting the config names", settings["alwaysThinkingEnabled"])
+	}
+	if settings["permissions"] == nil {
+		t.Error("the permissions the project already had were dropped")
+	}
+}
+
+func TestNonoLeavesAProjectWithNoLocalSettingsFileAlone(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  settings:\n    alwaysThinkingEnabled: true\n")
+
+	if err := Get(config.BackendNono).PrepareAgent(Host{}, cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfg.ProjectDir, claudeLocalSettingsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("lid created a settings file the project never kept")
+	}
+}
+
+func TestNonoConfigWinsOverWhatTheSettingsFileAlreadySaid(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  settings:\n    model: opus\n")
+	path := seedLocalSettings(t, cfg, `{"model": "sonnet"}`)
+
+	if err := Get(config.BackendNono).PrepareAgent(Host{}, cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+
+	if got := localSettings(t, path)["model"]; got != "opus" {
+		t.Fatalf("model = %v, want the config's value to win", got)
+	}
+}
+
+// A custom theme is a file lid writes into a sandbox's home. A nono session's
+// home is the user's own, so the setting would point at a theme that is not
+// there and Claude would fall back to its default anyway.
+func TestNonoKeepsACustomThemeOutOfTheProjectsSettings(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  theme: ./theme.json\n  settings:\n    alwaysThinkingEnabled: true\n")
+	path := seedLocalSettings(t, cfg, `{}`)
+
+	if err := Get(config.BackendNono).PrepareAgent(Host{}, cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+
+	settings := localSettings(t, path)
+	if _, ok := settings["theme"]; ok {
+		t.Errorf("theme = %v, want no theme naming a file the host does not have", settings["theme"])
+	}
+	if settings["alwaysThinkingEnabled"] != true {
+		t.Error("the rest of the block should still land")
+	}
+}
+
+func TestNonoCarriesABuiltInThemeIntoTheProjectsSettings(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  theme: dark\n")
+	path := seedLocalSettings(t, cfg, `{}`)
+
+	if err := Get(config.BackendNono).PrepareAgent(Host{}, cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+
+	if got := localSettings(t, path)["theme"]; got != "dark" {
+		t.Fatalf("theme = %v, want the built-in theme the config names", got)
+	}
+}
+
+func TestNonoSaysTheClaudeBlockIsIgnoredWhenThereIsNoFileToMergeInto(t *testing.T) {
+	warnings, err := Get(config.BackendNono).Validate(cfgFor(t, "name: api\nbackend: nono\nclaude:\n  theme: dark\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(warnings, claudeLocalSettingsFile) {
+		t.Fatalf("warnings = %v, want one naming the file the settings would have gone into", warnings)
+	}
+}
+
+func TestNonoStopsCallingTheClaudeBlockIgnoredOnceItHasSomewhereToLand(t *testing.T) {
+	cfg := cfgFor(t, "name: api\nbackend: nono\nclaude:\n  settings:\n    alwaysThinkingEnabled: true\n")
+	seedLocalSettings(t, cfg, `{}`)
+
+	warnings, err := Get(config.BackendNono).Validate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasWarning(warnings, "ignoring claude") {
+		t.Fatalf("warnings = %v, want no claim the block was ignored", warnings)
+	}
+}
+
+func hasWarning(warnings []string, substring string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, substring) {
+			return true
+		}
+	}
+	return false
 }
