@@ -19,6 +19,15 @@ network:
   - registry.nono.sh
 handoff:
   enabled: true
+env:
+  CLAUDE_CODE_ENABLE_TELEMETRY: "0"
+  CLAUDE_CODE_DISABLE_1M_CONTEXT: "0"
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false"
+  CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "30"
+  OTEL_LOG_USER_PROMPTS: 0
+  OTEL_LOGS_EXPORTER: "none"
+  OTEL_METRICS_EXPORTER: "none"
+  OTEL_TRACES_EXPORTER: "none"
 claude:
   plugins:
     marketplaces:
@@ -34,19 +43,16 @@ claude:
     tui: default
     alwaysThinkingEnabled: true
     skipDangerousModePermissionPrompt: true
+    remoteControlAtStartup: false
     defaultMode: bypassPermissions
     bypassPermissionsModeAccepted: true
     feedbackSurveyRate: 0
-    model: "claude-opus-5"
-    effortLevel: "high"
-    env:
-      CLAUDE_CODE_ENABLE_TELEMETRY: "0"
-      CLAUDE_CODE_DISABLE_1M_CONTEXT: "0"
-      ENABLE_CLAUDEAI_MCP_SERVERS: "false"
-      CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "30"
+    model: "claude-opus-5-5"
+    effortLevel: "medium"
     attribution:
       commit: ""
       pr: ""
     enabledPlugins:
       "superpowers@claude-plugins-official": true
       "claude-dashboard@claude-dashboard": true
+      "cc-plugin-you-should-know@builtin": true
