@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -48,12 +49,19 @@ func labelWidth(rows [][2]string) int {
 	return width
 }
 
+func configBackendRow(cfg *config.Config) string {
+	if cfg.BackendSource == config.SourceFile {
+		return cfg.Backend + ", from " + filepath.Base(cfg.Path)
+	}
+	return backendRow(cfg)
+}
+
 func configRows(cfg *config.Config) [][2]string {
 	rows := [][2]string{
 		{"config", cfg.Path},
 		{"name", cfg.Name},
 		{"agent", cfg.Agent},
-		{"backend", cfg.Backend},
+		{"backend", configBackendRow(cfg)},
 	}
 
 	for _, row := range [][2]string{

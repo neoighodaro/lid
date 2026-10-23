@@ -25,6 +25,7 @@ type App struct {
 
 	Cwd        string
 	ConfigPath string
+	Backend    string
 
 	PendingUpdate string
 
@@ -37,6 +38,10 @@ type App struct {
 	cfgOnce sync.Once
 	cfg     *config.Config
 	cfgErr  error
+
+	declaredOnce sync.Once
+	declared     *config.Config
+	declaredErr  error
 }
 
 func New(version, commit, date string) (*App, error) {
@@ -80,11 +85,22 @@ func (a *App) SandboxHost() backend.Host {
 	return h
 }
 
+// Config loads the project's config for the backend named by --backend, else
+// the one remembered until 'lid stop', else the file's own.
 func (a *App) Config() (*config.Config, error) {
 	a.cfgOnce.Do(func() {
-		a.cfg, a.cfgErr = config.Load(a.Cwd, a.ConfigPath)
+		a.cfg, a.cfgErr = config.LoadSelected(a.Cwd, a.ConfigPath, a.Backend)
 	})
 	return a.cfg, a.cfgErr
+}
+
+// DeclaredConfig is Config without the remembered backend, for commands that
+// work on the file rather than on a running session.
+func (a *App) DeclaredConfig() (*config.Config, error) {
+	a.declaredOnce.Do(func() {
+		a.declared, a.declaredErr = config.LoadFor(a.Cwd, a.ConfigPath, a.Backend)
+	})
+	return a.declared, a.declaredErr
 }
 
 type ExitError struct {

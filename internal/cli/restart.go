@@ -7,6 +7,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
+	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -15,13 +16,18 @@ func newRestartCommand(a *app.App) *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "restart",
+		Use:   "restart [backend]",
 		Short: "Replace this project's sandbox, then start the agent in the new one",
 		Long: "Replace this project's sandbox, then start the agent in the new one.\n\n" +
 			"The old sandbox is destroyed, so whatever is in it that is not part of your\n" +
-			"project goes with it. This asks first unless --force says not to.",
-		Args: cobra.NoArgs,
+			"project goes with it. This asks first unless --force says not to.\n\n" +
+			"'lid restart <backend>' switches: it stops the session on the other backend\n" +
+			"first, then starts on this one and remembers it until 'lid stop'.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := takeBackendArg(a, args); err != nil {
+				return err
+			}
 			cfg, err := a.Config()
 			if err != nil {
 				return err
@@ -35,19 +41,34 @@ func newRestartCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
+			other := ""
+			if cfg.BackendSource == config.SourceFlag {
+				other = otherBackendRunning(a, cfg)
+			}
+
 			state, err := b.Status(a.SandboxHost(), cfg, backend.StatusOptions{})
 			if err != nil {
 				return err
 			}
-			if state.Exists && !force && !confirmReplace(a, cfg.Name) {
+			if (state.Exists || other != "") && !force && !confirmReplace(a, cfg.Name) {
 				fmt.Fprintln(a.Err, ui.Err.Info.Render("Left the "+cfg.Name+" sandbox where it was"))
 				return nil
+			}
+
+			if other != "" {
+				if err := backend.Get(other).Stop(a.SandboxHost(), cfg); err != nil {
+					return err
+				}
+				fmt.Fprintln(a.Err, ui.Err.Info.Render("Stopped "+cfg.Name+" on "+other))
 			}
 
 			a.Zellij.RenameTab(cfg.Zellij.DisplayName)
 
 			provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: true})
 			if err != nil {
+				return err
+			}
+			if err := rememberIfNamed(cfg); err != nil {
 				return err
 			}
 

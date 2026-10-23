@@ -155,6 +155,9 @@ func runNetwork(a *app.App, action backend.NetworkAction, domains []string, pers
 	if err != nil {
 		return err
 	}
+	if err := checkSelection(cfg); err != nil {
+		return err
+	}
 
 	b, err := resolveBackend(a, cfg)
 	if err != nil {

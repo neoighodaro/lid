@@ -11,6 +11,80 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// takeBackendArg folds a backend named as an argument into --backend, so the
+// two spellings resolve the same way everywhere after.
+func takeBackendArg(a *app.App, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if a.Backend != "" && a.Backend != args[0] {
+		return failure.New("the backend is given twice, as %q and --backend %q", args[0], a.Backend).
+			WithFix("pass it once")
+	}
+	a.Backend = args[0]
+	return nil
+}
+
+// backendRow names the backend along with where it came from, when that is
+// not simply the config file.
+func backendRow(cfg *config.Config) string {
+	switch cfg.BackendSource {
+	case config.SourceFlag:
+		return cfg.Backend + ", from --backend"
+	case config.SourceSelection:
+		return cfg.Backend + ", remembered until 'lid stop'"
+	}
+	return cfg.Backend
+}
+
+// otherBackendRunning names a backend other than cfg's that is running this
+// project, or returns "". A backend that is not installed or does not answer
+// counts as not running: one missing tool must not block the other.
+func otherBackendRunning(a *app.App, cfg *config.Config) string {
+	for _, name := range config.Backends {
+		if name == cfg.Backend {
+			continue
+		}
+		b := backend.Get(name)
+		if b == nil || b.EnsureAvailable(a.SandboxHost()) != nil {
+			continue
+		}
+		if state, err := b.Status(a.SandboxHost(), cfg, backend.StatusOptions{}); err == nil && state.Running {
+			return name
+		}
+	}
+	return ""
+}
+
+// ensureOnlyBackend keeps a project on one backend at a time.
+func ensureOnlyBackend(a *app.App, cfg *config.Config) error {
+	if other := otherBackendRunning(a, cfg); other != "" {
+		return failure.New("the %s sandbox is running on %s", cfg.Name, other).
+			WithFix("stop it with 'lid stop', or switch with 'lid restart %s'", cfg.Backend)
+	}
+	return nil
+}
+
+// rememberIfNamed records the backend only when the user named one: a plain
+// start follows the file, so editing its backend: keeps working.
+func rememberIfNamed(cfg *config.Config) error {
+	if cfg.BackendSource != config.SourceFlag {
+		return nil
+	}
+	return cfg.Remember()
+}
+
+// checkSelection refuses a --backend that disagrees with the backend the
+// project was started on, which would point the command at a session that is
+// not there.
+func checkSelection(cfg *config.Config) error {
+	if cfg.BackendSource == config.SourceFlag && cfg.Selected != "" && cfg.Selected != cfg.Backend {
+		return failure.New("%s is on %s, not %s", cfg.Name, cfg.Selected, cfg.Backend).
+			WithFix("run 'lid stop' to end it, or 'lid restart %s' to switch", cfg.Backend)
+	}
+	return nil
+}
+
 // resolveBackend picks the backend the config names and reports everything it
 // cannot honour, so a session never starts on a silent misunderstanding.
 func resolveBackend(a *app.App, cfg *config.Config) (backend.Backend, error) {

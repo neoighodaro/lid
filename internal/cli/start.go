@@ -12,10 +12,16 @@ func newStartCommand(a *app.App) *cobra.Command {
 	var printOnly, rebuild bool
 
 	cmd := &cobra.Command{
-		Use:   "start",
+		Use:   "start [backend]",
 		Short: "Start the sandboxed agent for this project",
-		Args:  cobra.NoArgs,
+		Long: "Start the sandboxed agent for this project.\n\n" +
+			"Name a backend, as in 'lid start nono', to run on it instead of the one in the\n" +
+			"config; lid remembers it for this project until 'lid stop'.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := takeBackendArg(a, args); err != nil {
+				return err
+			}
 			cfg, err := a.Config()
 			if err != nil {
 				return err
@@ -35,10 +41,17 @@ func newStartCommand(a *app.App) *cobra.Command {
 				return nil
 			}
 
+			if err := ensureOnlyBackend(a, cfg); err != nil {
+				return err
+			}
+
 			a.Zellij.RenameTab(cfg.Zellij.DisplayName)
 
 			provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: rebuild})
 			if err != nil {
+				return err
+			}
+			if err := rememberIfNamed(cfg); err != nil {
 				return err
 			}
 

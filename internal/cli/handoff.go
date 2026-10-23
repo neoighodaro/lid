@@ -62,6 +62,9 @@ func installHandoffSkill(a *app.App, force bool) error {
 	if err != nil {
 		return err
 	}
+	if err := checkSelection(cfg); err != nil {
+		return err
+	}
 	path, err := backend.InstallHandoffSkill(a.SandboxHost(), cfg, force)
 	if err != nil {
 		return err

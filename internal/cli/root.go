@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/neoighodaro/lid/internal/app"
+	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/ui"
 	"github.com/neoighodaro/lid/internal/update"
 	"github.com/spf13/cobra"
@@ -39,6 +41,7 @@ func NewRootCommand(a *app.App) *cobra.Command {
 	}
 
 	root.PersistentFlags().StringVarP(&a.ConfigPath, "config", "C", "", "path to config file (overrides discovery)")
+	root.PersistentFlags().StringVarP(&a.Backend, "backend", "b", "", "backend to run this project on ("+strings.Join(config.Backends, " or ")+")")
 	root.SetVersionTemplate(versionLine(a) + "\n")
 	root.Flags().BoolP("version", "V", false, "version for lid")
 

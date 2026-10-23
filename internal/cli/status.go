@@ -29,7 +29,7 @@ func newStatusCommand(a *app.App) *cobra.Command {
 
 			rows := [][2]string{
 				{"sandbox", cfg.Name},
-				{"backend", cfg.Backend},
+				{"backend", backendRow(cfg)},
 				{"agent", cfg.Agent},
 				{"state", stateName(state)},
 			}
@@ -50,6 +50,9 @@ func newStatusCommand(a *app.App) *cobra.Command {
 func lookUpBackend(a *app.App) (*config.Config, backend.Backend, error) {
 	cfg, err := a.Config()
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkSelection(cfg); err != nil {
 		return nil, nil, err
 	}
 

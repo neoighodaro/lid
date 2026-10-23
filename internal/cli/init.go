@@ -27,9 +27,12 @@ func newInitCommand(a *app.App) *cobra.Command {
 		Long:  "Create a starter lid config for a backend, defaulting to " + config.DefaultBackend + ".",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := takeBackendArg(a, args); err != nil {
+				return err
+			}
 			backend := config.DefaultBackend
-			if len(args) == 1 {
-				backend = args[0]
+			if a.Backend != "" {
+				backend = a.Backend
 			}
 			return runInit(a, name, backend, runtimes)
 		},

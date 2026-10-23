@@ -123,3 +123,10 @@ shell:
   # Aliases, added alongside the ones your own shell already defines.
   aliases: {}
     # g: git
+
+# Keys for one backend only. Lists add to the shared ones above, maps merge,
+# and single values replace.
+# backends:
+#   sbx:
+#     network:
+#       - registry.npmjs.org

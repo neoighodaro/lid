@@ -18,7 +18,7 @@ func newBuildCommand(a *app.App) *cobra.Command {
 		Short: "Build the sandbox image for this project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := a.Config()
+			cfg, err := a.DeclaredConfig()
 			if err != nil {
 				return err
 			}

@@ -134,3 +134,12 @@ claude:
 # Instructions injected into the agent's memory file.
 # memory: |
 #   Project-specific instructions here.
+
+# Keys for one backend only. Lists add to the shared ones above, maps merge,
+# and single values replace. With a template: here, keep runtimes and
+# scripts.on_start out of the shared config.
+# backends:
+#   nono:
+#     paths:
+#       read:
+#         - ~/Developer/shared-lib
