@@ -3,10 +3,6 @@ agent: claude-code
 backend: sbx
 zellij:
   display_name: lid
-packages:
-  - ripgrep
-  - jq
-  - xz-utils
 runtimes:
   node: "24"
   go: "1.27"
@@ -57,3 +53,15 @@ claude:
       "superpowers@claude-plugins-official": true
       "claude-dashboard@claude-dashboard": true
       "cc-plugin-you-should-know@builtin": true
+
+backends:
+  sbx:
+    packages:
+      - ripgrep
+      - jq
+      - xz-utils
+
+  nono:
+    paths:
+      allow:
+        - ~/Developer/dotfiles/configs/claude/skills/synced
