@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -217,8 +218,10 @@ type Config struct {
 	Handoff        Handoff           `yaml:"handoff"`
 	Bridges        []Bridge          `yaml:"bridges"`
 
-	Path       string `yaml:"-"`
-	ProjectDir string `yaml:"-"`
+	Path          string        `yaml:"-"`
+	ProjectDir    string        `yaml:"-"`
+	BackendSource BackendSource `yaml:"-"`
+	Selected      string        `yaml:"-"`
 }
 
 // Discover returns the first config candidate present under projectDir.
@@ -248,14 +251,39 @@ func Resolve(projectDir, override string) (string, error) {
 	return override, nil
 }
 
+// BackendSource says where a config's backend came from.
+type BackendSource string
+
+const (
+	SourceFlag      BackendSource = "flag"
+	SourceSelection BackendSource = "selection"
+	SourceFile      BackendSource = "file"
+	SourceDefault   BackendSource = "default"
+)
+
+type fileWithSections struct {
+	Config   `yaml:",inline"`
+	Backends map[string]Config `yaml:"backends"`
+}
+
 // Load resolves and parses the config for projectDir, which becomes the
 // config's ProjectDir even when override points somewhere else entirely.
 func Load(projectDir, override string) (*Config, error) {
+	return LoadFor(projectDir, override, "")
+}
+
+// LoadFor is Load with backend, when set, taking precedence over the file's.
+func LoadFor(projectDir, override, backend string) (*Config, error) {
+	if backend != "" {
+		if err := ValidateBackend(backend); err != nil {
+			return nil, err
+		}
+	}
 	path, err := Resolve(projectDir, override)
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := Parse(path)
+	cfg, err := ParseFor(path, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -263,43 +291,121 @@ func Load(projectDir, override string) (*Config, error) {
 	return cfg, nil
 }
 
-// Parse reads the config at path, applies defaults and validates it. Unknown
-// keys are rejected: a mistyped 'runtime' would otherwise silently discard
-// every runtime. ProjectDir is inferred from the file's location; Load
-// overrides it with the directory actually being worked in.
+// Parse reads the config at path for the backend it declares.
 func Parse(path string) (*Config, error) {
-	f, err := os.Open(path)
+	return ParseFor(path, "")
+}
+
+// ParseFor reads the config at path as backend sees it, applies defaults and
+// validates it; an empty backend means the file's own. Unknown keys are
+// rejected: a mistyped 'runtime' would otherwise silently discard every
+// runtime. Every declared backends section is validated too, so a mistake
+// in one surfaces before the day you switch to it. ProjectDir is inferred
+// from the file's location; Load overrides it with the directory actually
+// being worked in.
+func ParseFor(path, backend string) (*Config, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, failure.New("cannot read the config").At(path).WithFix("%v", err)
 	}
-	defer f.Close()
+	ref := (&Config{Path: path, ProjectDir: projectDirFor(path)}).Ref()
 
-	cfg := &Config{Path: path, ProjectDir: projectDirFor(path)}
-
-	dec := yaml.NewDecoder(f)
-	dec.KnownFields(true)
-	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, failure.New("%s", cleanYAMLError(err)).At(cfg.Ref())
+	if _, _, err := effectiveDocument(data, ""); err != nil {
+		var f *failure.Error
+		if errors.As(err, &f) {
+			return nil, failure.At(err, ref)
+		}
 	}
 
+	var file fileWithSections
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&file); err != nil && !errors.Is(err, io.EOF) {
+		return nil, failure.New("%s", cleanYAMLError(err)).At(ref)
+	}
+
+	active, source := backend, SourceFlag
+	switch {
+	case backend != "":
+		if file.Backend != "" {
+			if err := ValidateBackend(file.Backend); err != nil {
+				return nil, failure.At(err, ref)
+			}
+		}
+	case file.Backend != "":
+		active, source = file.Backend, SourceFile
+	default:
+		active, source = DefaultBackend, SourceDefault
+	}
+
+	cfg, hasSections, err := configFor(data, path, active, &file.Config)
+	if err != nil {
+		return nil, failure.At(err, ref)
+	}
+	cfg.BackendSource = source
+	if err := validated(cfg); err != nil {
+		return nil, err
+	}
+	if !hasSections {
+		return cfg, nil
+	}
+
+	for _, name := range Backends {
+		if _, declared := file.Backends[name]; !declared || name == active {
+			continue
+		}
+		other, _, err := configFor(data, path, name, nil)
+		if err == nil {
+			err = other.Validate()
+		}
+		if err != nil {
+			var f *failure.Error
+			if errors.As(err, &f) {
+				f.What = sectionsKey + "." + name + ": " + f.What
+				return nil, failure.At(err, ref)
+			}
+			return nil, fmt.Errorf("%s: %s.%s: %w", path, sectionsKey, name, err)
+		}
+	}
+	return cfg, nil
+}
+
+// configFor builds the config backend sees, with its defaults applied. A file
+// without sections reuses plain, already strictly decoded, as is.
+func configFor(data []byte, path, backend string, plain *Config) (*Config, bool, error) {
+	doc, hasSections, err := effectiveDocument(data, backend)
+	if err != nil {
+		return nil, hasSections, err
+	}
+	cfg := &Config{}
+	switch {
+	case !hasSections && plain != nil:
+		cfg = plain
+	case doc != nil:
+		if err := doc.Decode(cfg); err != nil {
+			return nil, hasSections, failure.New("%s", cleanYAMLError(err))
+		}
+	}
+	cfg.Path, cfg.ProjectDir = path, projectDirFor(path)
+	cfg.Backend = backend
 	if cfg.Agent == "" {
 		cfg.Agent = DefaultAgent
-	}
-	if cfg.Backend == "" {
-		cfg.Backend = DefaultBackend
 	}
 	if cfg.BaseImage == "" && cfg.BuildsImage() && cfg.Template == "" {
 		cfg.BaseImage = DefaultBaseImage
 	}
+	return cfg, hasSections, nil
+}
 
+func validated(cfg *Config) error {
 	if err := cfg.Validate(); err != nil {
 		var f *failure.Error
 		if !errors.As(err, &f) {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			return fmt.Errorf("%s: %w", cfg.Path, err)
 		}
-		return nil, failure.At(err, cfg.Ref())
+		return failure.At(err, cfg.Ref())
 	}
-	return cfg, nil
+	return nil
 }
 
 func projectDirFor(path string) string {
@@ -619,7 +725,7 @@ func (c *Config) HandoffPort() int {
 }
 
 func (c *Config) KitDir() string {
-	return filepath.Join(c.ProjectDir, ".config", "lid", ".kit")
+	return kitDirFor(c.ProjectDir)
 }
 
 func (c *Config) SbxAgent() string {
@@ -633,12 +739,24 @@ func (c *Config) SandboxImageName() string {
 	return c.Name + "-sandbox"
 }
 
+// FileHash fingerprints the config as this backend sees it, leaving out what
+// lid applies at start rather than bakes into the image. A file without
+// backends sections hashes exactly as it always has.
 func (c *Config) FileHash() (string, error) {
 	data, err := os.ReadFile(c.Path)
 	if err != nil {
 		return "", failure.New("cannot read the config to hash it").At(c.Ref()).WithFix("%v", err)
 	}
-	return hashOf(withoutStartApplied(data)), nil
+	doc, hasSections, err := effectiveDocument(data, c.Backend)
+	if err != nil || !hasSections {
+		return hashOf(withoutStartApplied(data)), nil
+	}
+	var merged map[string]any
+	if err := doc.Decode(&merged); err != nil {
+		return hashOf(data), nil
+	}
+	delete(merged, "backend")
+	return hashOf(strippedJSON(merged, data)), nil
 }
 
 func withoutStartApplied(data []byte) []byte {
@@ -646,6 +764,10 @@ func withoutStartApplied(data []byte) []byte {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return data
 	}
+	return strippedJSON(doc, data)
+}
+
+func strippedJSON(doc map[string]any, fallback []byte) []byte {
 	delete(doc, "memory")
 	delete(doc, "zellij")
 	delete(doc, "shell")
@@ -658,7 +780,7 @@ func withoutStartApplied(data []byte) []byte {
 	}
 	stripped, err := json.Marshal(doc)
 	if err != nil {
-		return data
+		return fallback
 	}
 	return stripped
 }
