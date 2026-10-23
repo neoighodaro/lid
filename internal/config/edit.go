@@ -10,21 +10,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AddNetworkDomains adds domains to the network: list in the config at path,
-// leaving the comments and key order the user wrote in place. Domains already
-// listed are left alone, and the key is created when the file has none.
-func AddNetworkDomains(path string, domains []string) error {
-	return editNetwork(path, domains, nil)
+// AddNetworkDomains adds domains to the shared network: list in the config at
+// path, leaving the comments and key order the user wrote in place. Domains
+// already listed there, or in the active backend's section, are left alone,
+// and the key is created when the file has none.
+func AddNetworkDomains(path string, domains []string, active string) error {
+	return editNetwork(path, domains, nil, active)
 }
 
 // RemoveNetworkDomains drops domains from the network: list in the config at
-// path. Domains that are not listed are ignored, and the key stays behind even
-// when the list empties, so the comments around it survive.
+// path and from every backends section. Domains that are not listed are
+// ignored, and the key stays behind even when the list empties, so the
+// comments around it survive.
 func RemoveNetworkDomains(path string, domains []string) error {
-	return editNetwork(path, nil, domains)
+	return editNetwork(path, nil, domains, "")
 }
 
-func editNetwork(path string, add, remove []string) error {
+func editNetwork(path string, add, remove []string, active string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return failure.New("cannot read the config to edit it").At(path).WithFix("%v", err)
@@ -54,17 +56,20 @@ func editNetwork(path string, add, remove []string) error {
 		for _, domain := range remove {
 			drop[domain] = true
 		}
-		kept := make([]*yaml.Node, 0, len(seq.Content))
-		for _, node := range seq.Content {
-			if !drop[node.Value] {
-				kept = append(kept, node)
+		for _, list := range append([]*yaml.Node{seq}, sectionNetworks(mapping)...) {
+			kept := make([]*yaml.Node, 0, len(list.Content))
+			for _, node := range list.Content {
+				if !drop[node.Value] {
+					kept = append(kept, node)
+				}
 			}
+			list.Content = kept
 		}
-		seq.Content = kept
 	}
 
+	activeList := sectionNetworks(mapping, active)
 	for _, domain := range add {
-		if containsScalar(seq, domain) {
+		if containsScalar(seq, domain) || (len(activeList) > 0 && containsScalar(activeList[0], domain)) {
 			continue
 		}
 		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: domain})
@@ -157,6 +162,29 @@ func networkSequence(mapping *yaml.Node) (*yaml.Node, error) {
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	mapping.Content = append(mapping.Content, key, seq)
 	return seq, nil
+}
+
+// sectionNetworks returns the network lists under backends, limited to the
+// named backends when any are given. It never creates a missing one.
+func sectionNetworks(mapping *yaml.Node, only ...string) []*yaml.Node {
+	sections := valueOf(mapping, sectionsKey)
+	if sections == nil || sections.Kind != yaml.MappingNode {
+		return nil
+	}
+	var lists []*yaml.Node
+	for i := 0; i+1 < len(sections.Content); i += 2 {
+		if len(only) > 0 && !contains(only, sections.Content[i].Value) {
+			continue
+		}
+		section := sections.Content[i+1]
+		if section.Kind != yaml.MappingNode {
+			continue
+		}
+		if list := valueOf(section, "network"); list != nil && list.Kind == yaml.SequenceNode {
+			lists = append(lists, list)
+		}
+	}
+	return lists
 }
 
 func containsScalar(seq *yaml.Node, value string) bool {

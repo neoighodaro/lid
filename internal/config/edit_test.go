@@ -30,7 +30,7 @@ func read(t *testing.T, path string) string {
 func TestAddingADomainKeepsTheCommentsTheUserWrote(t *testing.T) {
 	path := writeConfig(t, "# the project this sandbox is for\nname: api\n\n# hosts the agent may reach\nnetwork:\n  - github.com\n")
 
-	if err := AddNetworkDomains(path, []string{"pypi.org"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"pypi.org"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -45,7 +45,7 @@ func TestAddingADomainKeepsTheCommentsTheUserWrote(t *testing.T) {
 func TestAddingADomainAlreadyListedChangesNothing(t *testing.T) {
 	path := writeConfig(t, "name: api\nnetwork:\n  - github.com\n")
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestAddingADomainAlreadyListedChangesNothing(t *testing.T) {
 func TestAddingADomainToAConfigWithNoNetworkKeyCreatesOne(t *testing.T) {
 	path := writeConfig(t, "name: api\n")
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestAddingADomainToAConfigWithNoNetworkKeyCreatesOne(t *testing.T) {
 func TestAddingADomainFillsAnEmptyNetworkKey(t *testing.T) {
 	path := writeConfig(t, "name: api\nnetwork:\n")
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -91,7 +91,7 @@ func TestAddingADomainFillsAnEmptyNetworkKey(t *testing.T) {
 func TestTheRewrittenNetworkListIsOneHostPerLine(t *testing.T) {
 	path := writeConfig(t, "name: api\nnetwork: [github.com]\n")
 
-	if err := AddNetworkDomains(path, []string{"pypi.org"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"pypi.org"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -151,7 +151,7 @@ func TestEditingTheConfigKeepsItsPermissions(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestEditingTheConfigKeepsItsPermissions(t *testing.T) {
 func TestEditingTheConfigLeavesNoTemporaryFileBehind(t *testing.T) {
 	path := writeConfig(t, "name: api\n")
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err != nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestEditingTheConfigLeavesNoTemporaryFileBehind(t *testing.T) {
 func TestEditingAConfigWhoseNetworkIsNotAListSaysSo(t *testing.T) {
 	path := writeConfig(t, "name: api\nnetwork: github.com\n")
 
-	err := AddNetworkDomains(path, []string{"pypi.org"})
+	err := AddNetworkDomains(path, []string{"pypi.org"}, "sbx")
 	if err == nil {
 		t.Fatal("AddNetworkDomains accepted a scalar network key")
 	}
@@ -197,7 +197,7 @@ func TestEditingAConfigWhoseNetworkIsNotAListSaysSo(t *testing.T) {
 func TestEditingAConfigThatIsNotAMappingSaysSo(t *testing.T) {
 	path := writeConfig(t, "- github.com\n")
 
-	err := AddNetworkDomains(path, []string{"pypi.org"})
+	err := AddNetworkDomains(path, []string{"pypi.org"}, "sbx")
 	if err == nil {
 		t.Fatal("AddNetworkDomains accepted a config that is a list")
 	}
@@ -209,7 +209,7 @@ func TestEditingAConfigThatIsNotAMappingSaysSo(t *testing.T) {
 func TestEditingABrokenConfigLeavesItUntouched(t *testing.T) {
 	path := writeConfig(t, "name: api\n  bad indent: [\n")
 
-	if err := AddNetworkDomains(path, []string{"github.com"}); err == nil {
+	if err := AddNetworkDomains(path, []string{"github.com"}, "sbx"); err == nil {
 		t.Fatal("AddNetworkDomains accepted invalid YAML")
 	}
 
@@ -229,7 +229,7 @@ func TestAddNetworkDomainsWritesThroughASymlinkedConfig(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	if err := AddNetworkDomains(link, []string{"pypi.org"}); err != nil {
+	if err := AddNetworkDomains(link, []string{"pypi.org"}, "sbx"); err != nil {
 		t.Fatalf("AddNetworkDomains: %v", err)
 	}
 
@@ -246,5 +246,61 @@ func TestAddNetworkDomainsWritesThroughASymlinkedConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "pypi.org") {
 		t.Errorf("the host never reached the file the link points at:\n%s", body)
+	}
+}
+
+func TestAddSkipsADomainTheActiveSectionAlreadyAllows(t *testing.T) {
+	path := writeConfig(t, "name: x\nnetwork:\n  - b\nbackends:\n  sbx:\n    network:\n      - a\n")
+
+	if err := AddNetworkDomains(path, []string{"a"}, "sbx"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseFor(path, "nono")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Network, ",") != "b" {
+		t.Errorf("shared network = %v, want a left in the sbx section only", cfg.Network)
+	}
+}
+
+func TestAddStillWritesADomainOnlyTheOtherSectionHas(t *testing.T) {
+	path := writeConfig(t, "name: x\nbackends:\n  nono:\n    network:\n      - a\n")
+
+	if err := AddNetworkDomains(path, []string{"a"}, "sbx"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseFor(path, "sbx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.Network, ",") != "a" {
+		t.Errorf("sbx network = %v, want a added to the shared list", cfg.Network)
+	}
+}
+
+func TestRemoveStripsTheDomainFromEverySection(t *testing.T) {
+	path := writeConfig(t, "name: x\n# shared hosts\nnetwork:\n  - a\n  - b\nbackends:\n  sbx:\n    network:\n      - a\n  nono:\n    network: [a, c]\n")
+
+	if err := RemoveNetworkDomains(path, []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []string{"sbx", "nono"} {
+		cfg, err := ParseFor(path, backend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, domain := range cfg.Network {
+			if domain == "a" {
+				t.Errorf("%s still allows a:\n%s", backend, data)
+			}
+		}
+	}
+	if !strings.Contains(string(data), "# shared hosts") {
+		t.Errorf("comment lost:\n%s", data)
 	}
 }

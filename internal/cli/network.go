@@ -240,7 +240,7 @@ func appliedLine(action backend.NetworkAction, listed string) string {
 func persistNetwork(cfg *config.Config, action backend.NetworkAction, domains []string) error {
 	switch action {
 	case backend.NetworkAllow:
-		return config.AddNetworkDomains(cfg.Path, domains)
+		return config.AddNetworkDomains(cfg.Path, domains, cfg.Backend)
 	case backend.NetworkRemove:
 		return config.RemoveNetworkDomains(cfg.Path, domains)
 	}
