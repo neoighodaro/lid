@@ -1,5 +1,6 @@
 name: lid
 agent: claude-code
+backend: sbx
 zellij:
   display_name: lid
 packages:
@@ -41,14 +42,14 @@ claude:
       - security-guidance@claude-plugins-official
   settings:
     tui: default
+    effortLevel: "medium"
+    feedbackSurveyRate: 0
+    model: "claude-opus-5-5"
     alwaysThinkingEnabled: true
-    skipDangerousModePermissionPrompt: true
     remoteControlAtStartup: false
     defaultMode: bypassPermissions
     bypassPermissionsModeAccepted: true
-    feedbackSurveyRate: 0
-    model: "claude-opus-5-5"
-    effortLevel: "medium"
+    skipDangerousModePermissionPrompt: true
     attribution:
       commit: ""
       pr: ""
