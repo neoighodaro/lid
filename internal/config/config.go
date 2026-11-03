@@ -207,6 +207,7 @@ type Config struct {
 	EnvFile        []string          `yaml:"env_file"`
 	Network        []string          `yaml:"network"`
 	NetworkProfile string            `yaml:"network_profile"`
+	Audit          bool              `yaml:"audit"`
 	AllowCommands  []string          `yaml:"allow_commands"`
 	Paths          Paths             `yaml:"paths"`
 	Scripts        Scripts           `yaml:"scripts"`
@@ -542,6 +543,7 @@ func (c *Config) validateBackendExclusions() error {
 		}{
 			{"allow_commands", len(c.AllowCommands) > 0, "a container image has no host command shims to lift"},
 			{"network_profile", c.NetworkProfile != "", "a container image has no nono network policy to pick"},
+			{"audit", c.Audit, "a container image has no nono audit trail to keep"},
 			{"paths", c.Paths.IsSet(), "a container image has no host filesystem to grant"},
 		} {
 			if conflict.set {

@@ -34,6 +34,11 @@ runtimes: {}
 # above picks the profile nono maintains for it.
 # network_profile: developer
 
+# Keep nono's audit trail of the session. lid turns it off by default: its
+# network log holds 4096 requests, and a long session fills it and then warns
+# on every request after that.
+# audit: true
+
 # Extra hosts to allow, on top of whatever the profile above reaches.
 network: []
   # - "*.npmjs.org"

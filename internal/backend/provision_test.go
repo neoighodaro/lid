@@ -231,6 +231,36 @@ func TestStartArgvHandsTheShellAgentToNonoShell(t *testing.T) {
 	}
 }
 
+func TestStartArgvLeavesTheAuditTrailOffUnlessAsked(t *testing.T) {
+	for body, want := range map[string]bool{
+		"name: lid\nbackend: nono\n":              true,
+		"name: lid\nbackend: nono\naudit: true\n": false,
+	} {
+		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc")
+		if err != nil {
+			t.Fatalf("StartArgv: %v", err)
+		}
+
+		got := strings.Join(argv, " ")
+		if strings.Contains(got, "--no-audit") != want {
+			t.Errorf("%q: argv = %q, want --no-audit %v", body, got, want)
+		}
+		if want && strings.Index(got, "--no-audit") > strings.Index(got, " -- ") {
+			t.Errorf("argv = %q, want --no-audit before the agent's command", got)
+		}
+	}
+}
+
+func TestStartArgvKeepsNoAuditOffNonoShell(t *testing.T) {
+	argv, err := Get("nono").StartArgv(cfgFor(t, "name: lid\nagent: shell\n"), "/tmp/nono.jsonc")
+	if err != nil {
+		t.Fatalf("StartArgv: %v", err)
+	}
+	if got := strings.Join(argv, " "); strings.Contains(got, "--no-audit") {
+		t.Errorf("argv = %q, but nono shell has no --no-audit flag", got)
+	}
+}
+
 func TestStartArgvRefusesAnAgentNonoCannotSandbox(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\nagent: gemini\nbackend: nono\n")
 
