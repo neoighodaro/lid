@@ -14,6 +14,7 @@ network:
   - docs.docker.com
   - docker.com
   - registry.nono.sh
+  - docs.nvidia.com
 handoff:
   enabled: true
 env:
