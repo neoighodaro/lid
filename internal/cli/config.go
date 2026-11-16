@@ -93,6 +93,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"claude.theme", cfg.Claude.Theme},
 		{"claude.marketplaces", strings.Join(cfg.Claude.Plugins.Marketplaces, ", ")},
 		{"claude.install", strings.Join(cfg.Claude.Plugins.Install, ", ")},
+		{"claude.install_optional", strings.Join(cfg.Claude.Plugins.InstallOptional, ", ")},
 		{"claude.settings", joinAnyKeys(cfg.Claude.Settings)},
 		{"zellij", cfg.Zellij.DisplayName},
 		{"memory", lineCount(cfg.Memory)},

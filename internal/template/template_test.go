@@ -570,3 +570,90 @@ func TestABridgeThatIsAlreadyUpIsLeftAlone(t *testing.T) {
 		t.Errorf("a second socat was started for a bridge already up: %s\nlog:\n%s", started, log)
 	}
 }
+
+func writeTestMarketplace(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "gaia")
+	for path, body := range map[string]string{
+		".claude-plugin/marketplace.json":          `{"name":"pinktum","plugins":[{"name":"gaia","source":"./claude-plugin"},{"name":"remote","source":{"source":"github","repo":"o/r"}}]}`,
+		"claude-plugin/.claude-plugin/plugin.json": `{"name":"gaia"}`,
+		"claude-plugin/skills/start/SKILL.md":      "start",
+		"cmd/main.go":                              "package main",
+		".git/config":                              "[core]",
+	} {
+		full := filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestRenderCopiesALocalMarketplaceIntoTheImage(t *testing.T) {
+	market := writeTestMarketplace(t)
+	out := render(t, "name: lid\nagent: claude-code\nclaude:\n  plugins:\n    marketplaces:\n      - obra/superpowers\n      - "+market+"\n")
+
+	for _, want := range []string{
+		"RUN claude plugin marketplace add obra/superpowers",
+		"COPY --chown=agent marketplaces/1-gaia " + MarketplaceRoot + "/1-gaia",
+		"RUN claude plugin marketplace add " + MarketplaceRoot + "/1-gaia",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Dockerfile missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestWriteDockerfileCopiesOnlyTheManifestAndLocalPlugins(t *testing.T) {
+	market := writeTestMarketplace(t)
+	cfg := cfgFor(t, "name: lid\nagent: claude-code\nclaude:\n  plugins:\n    marketplaces:\n      - "+market+"\n")
+
+	kitDir, err := WriteDockerfile(cfg)
+	if err != nil {
+		t.Fatalf("WriteDockerfile: %v", err)
+	}
+	root := filepath.Join(kitDir, "marketplaces", "0-gaia")
+	for _, want := range []string{".claude-plugin/marketplace.json", "claude-plugin/.claude-plugin/plugin.json", "claude-plugin/skills/start/SKILL.md"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(want))); err != nil {
+			t.Errorf("missing %s: %v", want, err)
+		}
+	}
+	for _, unwanted := range []string{"cmd", ".git"} {
+		if _, err := os.Stat(filepath.Join(root, unwanted)); err == nil {
+			t.Errorf("copied %s, want only the manifest and plugin folders", unwanted)
+		}
+	}
+}
+
+func TestALocalMarketplaceWithoutAManifestIsSkipped(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	cfg := cfgFor(t, "name: lid\nagent: claude-code\nclaude:\n  plugins:\n    marketplaces:\n      - obra/superpowers\n      - "+missing+"\n")
+
+	kitDir, err := WriteDockerfile(cfg)
+	if err != nil {
+		t.Fatalf("WriteDockerfile: %v", err)
+	}
+	out, _ := os.ReadFile(filepath.Join(kitDir, "Dockerfile"))
+	if !strings.Contains(string(out), "RUN claude plugin marketplace add obra/superpowers") || strings.Contains(string(out), "marketplaces/") {
+		t.Errorf("Dockerfile should add only the remote marketplace:\n%s", out)
+	}
+	if got := MissingMarketplaces(cfg); len(got) != 1 || got[0] != missing {
+		t.Errorf("MissingMarketplaces = %v, want [%s]", got, missing)
+	}
+}
+
+func TestRenderGuardsOptionalInstallsAndKeepsRequiredOnesStrict(t *testing.T) {
+	out := render(t, "name: lid\nagent: claude-code\nclaude:\n  plugins:\n    install:\n      - superpowers@obra\n    install_optional:\n      - gaia@pinktum\n")
+
+	for _, want := range []string{
+		"RUN claude plugin install superpowers@obra\n",
+		`RUN if claude plugin marketplace list --json | grep -q '"name": *"pinktum"'; then claude plugin install 'gaia@pinktum'; else echo 'lid: skipped optional plugin gaia@pinktum: it is not available'; fi`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Dockerfile missing %q:\n%s", want, out)
+		}
+	}
+}

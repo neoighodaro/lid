@@ -41,6 +41,9 @@ func (sbx) Validate(cfg *config.Config) ([]string, error) {
 
 	_, hasPHP := cfg.Runtimes["php"]
 	warnings := handoffAgentWarning(cfg)
+	for _, entry := range template.MissingMarketplaces(cfg) {
+		warnings = append(warnings, fmt.Sprintf("skipping marketplace %s: it has no .claude-plugin/marketplace.json, so plugins from it are not installed", entry))
+	}
 	for _, group := range []struct {
 		why    string
 		fields []field

@@ -130,6 +130,12 @@ claude:
     install: []
       # - superpowers@claude-plugins-official
 
+    # Installed when their marketplace is available, skipped otherwise: for
+    # plugins from a local marketplace folder not everyone has. A local
+    # marketplace whose folder is missing is skipped with a warning.
+    install_optional: []
+      # - gaia@pinktum
+
   # Merged into the agent's settings.json.
   settings: {}
     # alwaysThinkingEnabled: true

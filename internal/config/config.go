@@ -116,8 +116,9 @@ type Shell struct {
 }
 
 type ClaudePlugins struct {
-	Marketplaces []string `yaml:"marketplaces"`
-	Install      []string `yaml:"install"`
+	Marketplaces    []string `yaml:"marketplaces"`
+	Install         []string `yaml:"install"`
+	InstallOptional []string `yaml:"install_optional"`
 }
 
 type Claude struct {
@@ -697,6 +698,7 @@ func (c Claude) IsSet() bool {
 	return c.Theme != "" ||
 		len(c.Plugins.Marketplaces) > 0 ||
 		len(c.Plugins.Install) > 0 ||
+		len(c.Plugins.InstallOptional) > 0 ||
 		len(c.Settings) > 0
 }
 

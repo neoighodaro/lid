@@ -962,3 +962,16 @@ func TestSbxCreatePinsTheListedMCPServers(t *testing.T) {
 		t.Errorf("argv = %s, want --static-mcp gaia-api,context7", argv)
 	}
 }
+
+func TestSbxWarnsAboutASkippedLocalMarketplace(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent")
+	cfg := sbxCfg(t, "name: api\nclaude:\n  plugins:\n    marketplaces:\n      - "+missing+"\n    install_optional:\n      - gaia@pinktum\n")
+
+	warnings, err := Get(config.BackendSbx).Validate(cfg)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "skipping marketplace "+missing) {
+		t.Errorf("warnings = %v, want one about the skipped marketplace", warnings)
+	}
+}

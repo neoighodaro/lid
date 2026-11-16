@@ -41,6 +41,9 @@ func WriteDockerfile(cfg *config.Config) (string, error) {
 	if err := os.WriteFile(bridge, []byte(bridgeScript), 0o755); err != nil {
 		return "", failure.New("cannot write the bridge helper").At(bridge).WithFix("%v", err)
 	}
+	if err := copyMarketplaces(cfg, kitDir); err != nil {
+		return "", err
+	}
 	return kitDir, nil
 }
 

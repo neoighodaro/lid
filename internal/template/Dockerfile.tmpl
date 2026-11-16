@@ -26,11 +26,17 @@ USER agent
 {{- if .Claude }}
 
 RUN claude update || true
-{{- range .Plugins.Marketplaces }}
-RUN claude plugin marketplace add {{ . }}
+{{- range .Marketplaces }}
+{{- if .Copy }}
+COPY --chown=agent {{ .Copy }} {{ .Add }}
+{{- end }}
+RUN claude plugin marketplace add {{ .Add }}
 {{- end }}
 {{- range .Plugins.Install }}
 RUN claude plugin install {{ . }}
+{{- end }}
+{{- range .OptionalInstalls }}
+RUN {{ . }}
 {{- end }}
 {{- end }}
 {{- range .AgentBlocks }}
