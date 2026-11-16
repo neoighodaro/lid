@@ -1122,6 +1122,8 @@ func (h *sbxStartHost) output(argv []string) ([]byte, error) {
 	h.probes = append(h.probes, argv)
 	line := strings.Join(argv, " ")
 	switch {
+	case line == "sbx version":
+		return []byte("sbx version v0.54.0 4bec4a5\n"), nil
 	case strings.Contains(line, "sbx ls --json"):
 		return []byte(h.list), nil
 	case strings.Contains(line, "sbx ls"):
@@ -1465,6 +1467,8 @@ func (h *statusHost) output(argv []string) ([]byte, error) {
 	h.probes = append(h.probes, argv)
 	line := strings.Join(argv, " ")
 	switch {
+	case line == "sbx version":
+		return []byte("sbx version v0.54.0 4bec4a5\n"), nil
 	case strings.Contains(line, "--version"):
 		return []byte("nono 0.74.0\n"), nil
 	case strings.Contains(line, "sbx ls"), strings.Contains(line, "nono ps"):

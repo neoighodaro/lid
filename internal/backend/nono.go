@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -697,28 +696,14 @@ func nonoAgentNames() []string {
 	return names
 }
 
-var nonoVersionRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
-
 func checkNonoVersion(output string) error {
-	found := nonoVersionRe.FindStringSubmatch(output)
-	if found == nil {
-		return failure.New("cannot read a version from 'nono --version', which printed %q", firstLine(output)).
-			WithFix("check that the nono on your PATH is the sandbox tool")
-	}
-
-	want := nonoVersionRe.FindStringSubmatch(nonoMinVersion)
-	for i := 1; i <= 3; i++ {
-		got, _ := strconv.Atoi(found[i])
-		min, _ := strconv.Atoi(want[i])
-		if got > min {
-			return nil
-		}
-		if got < min {
-			return failure.New("nono %s is older than the %s lid's profiles need", strings.Join(found[1:4], "."), nonoMinVersion).
-				WithFix("update nono, then run this again")
-		}
-	}
-	return nil
+	return checkMinVersion(minVersion{
+		tool:    "nono",
+		command: "nono --version",
+		min:     nonoMinVersion,
+		why:     "lid's profiles need",
+		which:   "the sandbox tool",
+	}, output)
 }
 
 type nonoSession struct {

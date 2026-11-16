@@ -43,6 +43,8 @@ func (h *twoBackendHost) output(argv []string) ([]byte, error) {
 	switch strings.Join(argv, " ") {
 	case "nono --version":
 		return []byte("nono 0.74.0\n"), nil
+	case "sbx version":
+		return []byte("sbx version v0.54.0 4bec4a5\n"), nil
 	case "sbx ls --json":
 		return []byte(orEmptyList(h.sbxList)), nil
 	case "nono ps --json":
