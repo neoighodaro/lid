@@ -306,12 +306,19 @@ CLAUDE_PLUGIN_ROOT="$root" CLAUDE_PLUGIN_DATA=%q node "$hook" || true
 	return sbxSelfArgv(cfg, script)
 }
 
+var sbxAgentHosts = map[string][]string{
+	config.AgentClaudeCode: {"api.anthropic.com"},
+}
+
 func sbxNetworkAllow(cfg *config.Config) []string {
 	var allow []string
 	add := func(entry string) {
 		if entry != "" && !contains(allow, entry) {
 			allow = append(allow, entry)
 		}
+	}
+	for _, host := range sbxAgentHosts[cfg.Agent] {
+		add(host)
 	}
 	for _, domain := range cfg.Network {
 		add(domain)
