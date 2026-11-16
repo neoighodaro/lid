@@ -87,6 +87,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"scripts.on_start", strings.Join(cfg.Scripts.OnStart, ", ")},
 		{"handoff", handoffRow(cfg)},
 		{"bridges", joinBridges(cfg.Bridges)},
+		{"mcp", strings.Join(cfg.MCP, ", ")},
 		{"shell.directory", cfg.Shell.Directory},
 		{"shell.aliases", joinKeys(cfg.Shell.Aliases)},
 		{"claude.theme", cfg.Claude.Theme},

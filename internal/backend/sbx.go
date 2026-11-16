@@ -364,7 +364,16 @@ func sbxCreateArgv(cfg *config.Config) []string {
 		argv = append(argv, "-p", string(port))
 	}
 
+	argv = append(argv, "--static-mcp", sbxStaticMCP(cfg))
+
 	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+}
+
+func sbxStaticMCP(cfg *config.Config) string {
+	if len(cfg.MCP) == 0 {
+		return "none"
+	}
+	return strings.Join(cfg.MCP, ",")
 }
 
 // sbxSelfDir is where lid runs its own commands in a sandbox. Everything lid

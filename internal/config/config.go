@@ -218,6 +218,7 @@ type Config struct {
 	Memory         string            `yaml:"memory"`
 	Handoff        Handoff           `yaml:"handoff"`
 	Bridges        []Bridge          `yaml:"bridges"`
+	MCP            []string          `yaml:"mcp"`
 
 	Path          string        `yaml:"-"`
 	ProjectDir    string        `yaml:"-"`
@@ -527,6 +528,28 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	for _, name := range c.MCP {
+		if err := validateMCPName(name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateMCPName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return failure.New("an mcp entry is empty").
+			WithFix("remove it, or name a server registered with 'sbx mcp add'")
+	}
+	if strings.ContainsAny(name, ", \t") {
+		return failure.New("mcp entry %q is not a single server name", name).
+			WithFix("list each server on its own line")
+	}
+	if strings.EqualFold(name, "none") {
+		return failure.New("mcp entry %q is reserved", name).
+			WithFix("leave mcp empty to give the sandbox no MCP servers")
+	}
 	return nil
 }
 

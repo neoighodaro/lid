@@ -101,6 +101,13 @@ bridges: []
   #   host_port: 5432
   #   env: DB_HOST
 
+# Host MCP servers the agent can use, by the names they were registered under
+# with 'sbx mcp add'. The list is fixed when the sandbox is created, and an
+# empty one gives the agent none: otherwise it could attach any server
+# registered on your host, and local ones run outside the sandbox.
+mcp: []
+  # - gaia-my-project
+
 # What 'lid shell' opens. A one-off 'lid shell -- <command>' gets the directory
 # below; the aliases are for the interactive shell only.
 shell:

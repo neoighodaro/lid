@@ -944,3 +944,21 @@ func TestSbxBindMountsTheProjectUnlessCloneIsAskedFor(t *testing.T) {
 		t.Errorf("the sandbox was cloned without being asked\ncalls: %v", f.calls)
 	}
 }
+
+func TestSbxCreateGivesTheAgentNoHostMCPServersByDefault(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+
+	argv := strings.Join(sbxCreateArgv(cfg), " ")
+	if !strings.Contains(argv, "--static-mcp none ") {
+		t.Errorf("argv = %s, want --static-mcp none", argv)
+	}
+}
+
+func TestSbxCreatePinsTheListedMCPServers(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nmcp:\n  - gaia-api\n  - context7\n")
+
+	argv := strings.Join(sbxCreateArgv(cfg), " ")
+	if !strings.Contains(argv, "--static-mcp gaia-api,context7 ") {
+		t.Errorf("argv = %s, want --static-mcp gaia-api,context7", argv)
+	}
+}
