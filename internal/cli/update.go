@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/neoighodaro/lid/internal/app"
@@ -43,13 +44,15 @@ func newUpdateCheckCommand(a *app.App) *cobra.Command {
 	}
 }
 
-func runUpdate(a *app.App, ctx context.Context) error {
-	if !update.IsRelease(a.Version) {
-		return failure.New("this lid was built from source, not installed from a release (%s)", a.Version).
-			WithFix("update it the way you built it, with 'git pull && make build'")
-	}
+var (
+	updateTarget    = update.Target
+	newUpdateClient = func() *update.Client { return update.NewClient(update.Repo(os.Getenv)) }
+)
 
-	target, err := update.Target()
+func runUpdate(a *app.App, ctx context.Context) error {
+	fromSource := !update.IsRelease(a.Version)
+
+	target, err := updateTarget()
 	if err != nil {
 		return failure.New("cannot tell which file this lid is running from").
 			WithFix("%v", err)
@@ -65,7 +68,7 @@ func runUpdate(a *app.App, ctx context.Context) error {
 			WithFix("run 'sudo lid update', or reinstall it somewhere you own")
 	}
 
-	client := update.NewClient(update.Repo(os.Getenv))
+	client := newUpdateClient()
 	release, err := client.LatestRelease(ctx)
 	switch {
 	case errors.Is(err, update.ErrNoReleases):
@@ -76,7 +79,12 @@ func runUpdate(a *app.App, ctx context.Context) error {
 			WithFix("check your network, then try again")
 	}
 
-	if !update.IsNewer(a.Version, release.TagName) {
+	if fromSource {
+		if !confirmReleaseOverSource(a, release.TagName) {
+			fmt.Fprintln(a.Err, ui.Err.Info.Render("Kept the source build ("+a.Version+")"))
+			return nil
+		}
+	} else if !update.IsNewer(a.Version, release.TagName) {
 		fmt.Fprintln(a.Out, ui.Success.Render("lid is already up to date ("+a.Version+")"))
 		return nil
 	}
@@ -124,6 +132,20 @@ func runUpdate(a *app.App, ctx context.Context) error {
 	fmt.Fprintln(a.Out, ui.Success.Render("Updated to "+release.TagName))
 	warnStaleBroker(a)
 	return nil
+}
+
+// confirmReleaseOverSource asks before a build from source is replaced by a
+// release. Only a plain yes goes ahead, so a run with nobody there to answer
+// keeps the developer's build.
+func confirmReleaseOverSource(a *app.App, tag string) bool {
+	fmt.Fprintln(a.Err, ui.Err.Warn.Render("This lid was built from source ("+a.Version+"), not installed from a release"))
+	fmt.Fprint(a.Err, ui.Err.Info.Render("Replace it with the "+tag+" release? [y/N] "))
+
+	answer, entered := readAnswer(a.In)
+	if !entered {
+		fmt.Fprintln(a.Err)
+	}
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
 }
 
 func warnStaleBroker(a *app.App) {

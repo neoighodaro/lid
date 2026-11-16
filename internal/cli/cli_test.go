@@ -1639,34 +1639,6 @@ func TestStatusReportsTheNonoProfileAndItsSessions(t *testing.T) {
 	}
 }
 
-func runUpdateCommand(t *testing.T, version string, args ...string) (result, error) {
-	t.Helper()
-	var out, errBuf bytes.Buffer
-	a := &app.App{
-		Version: version,
-		In:      strings.NewReader(""),
-		Out:     &out,
-		Err:     &errBuf,
-		Cwd:     t.TempDir(),
-	}
-	root := NewRootCommand(a)
-	root.SetArgs(args)
-	err := root.Execute()
-	return result{out: out.String(), err: errBuf.String()}, err
-}
-
-func TestUpdateRefusesToInstallOverALidBuiltFromSource(t *testing.T) {
-	for _, version := range []string{"dev", "v1.2.3-4-g8a17b2a-dirty"} {
-		_, err := runUpdateCommand(t, version, "update")
-		if err == nil {
-			t.Fatalf("'lid update' on %s went ahead and would have overwritten the developer's own build", version)
-		}
-		if !strings.Contains(err.Error(), "make build") {
-			t.Errorf("err = %v, want it to say how to update a build from source", err)
-		}
-	}
-}
-
 func TestTheUpdateNoticeStaysQuietWhenNothingIsPending(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	a := &app.App{Version: "v1.2.3", Out: &out, Err: &errBuf}
