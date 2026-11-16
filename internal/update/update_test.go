@@ -177,7 +177,7 @@ func TestTheBackgroundCheckDoesNotSitInTheDirectoryItWasStartedFrom(t *testing.T
 	dir := t.TempDir()
 	record := filepath.Join(dir, "cwd")
 	script := filepath.Join(dir, "fake")
-	body := "#!/bin/sh\nif [ \"$1\" = \"" + CheckCommand + "\" ]; then pwd > \"" + record + "\"; fi\n"
+	body := "#!/bin/sh\nif [ \"$1\" = \"" + CheckCommand + "\" ]; then pwd > \"" + record + ".tmp\" && mv \"" + record + ".tmp\" \"" + record + "\"; fi\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
