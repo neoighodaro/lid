@@ -28,6 +28,8 @@ type data struct {
 	EnvBlocks        []string
 	Claude           bool
 	Plugins          config.ClaudePlugins
+	Marketplaces     []marketplace
+	OptionalInstalls []string
 	Bridges          bool
 	BridgeScriptPath string
 	SessionHook      []string
@@ -82,6 +84,10 @@ func Render(cfg *config.Config) (string, error) {
 	}
 	if d.Claude {
 		d.Plugins = cfg.Claude.Plugins
+		d.Marketplaces = marketplaces(cfg)
+		for _, plugin := range cfg.Claude.Plugins.InstallOptional {
+			d.OptionalInstalls = append(d.OptionalInstalls, optionalInstall(plugin))
+		}
 	}
 	d.Bridges = len(cfg.Bridges) > 0
 	if d.Bridges && !slices.Contains(d.Packages, "socat") {

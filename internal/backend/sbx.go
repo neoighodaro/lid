@@ -41,6 +41,9 @@ func (sbx) Validate(cfg *config.Config) ([]string, error) {
 
 	_, hasPHP := cfg.Runtimes["php"]
 	warnings := handoffAgentWarning(cfg)
+	for _, entry := range template.MissingMarketplaces(cfg) {
+		warnings = append(warnings, fmt.Sprintf("skipping marketplace %s: it has no .claude-plugin/marketplace.json, so plugins from it are not installed", entry))
+	}
 	for _, group := range []struct {
 		why    string
 		fields []field
@@ -364,7 +367,16 @@ func sbxCreateArgv(cfg *config.Config) []string {
 		argv = append(argv, "-p", string(port))
 	}
 
+	argv = append(argv, "--static-mcp", sbxStaticMCP(cfg))
+
 	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+}
+
+func sbxStaticMCP(cfg *config.Config) string {
+	if len(cfg.MCP) == 0 {
+		return "none"
+	}
+	return strings.Join(cfg.MCP, ",")
 }
 
 // sbxSelfDir is where lid runs its own commands in a sandbox. Everything lid

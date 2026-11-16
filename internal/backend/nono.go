@@ -452,6 +452,7 @@ func (nono) Validate(cfg *config.Config) ([]string, error) {
 			{"php.extensions", len(cfg.PHP.Extensions) > 0},
 			{"workspace", cfg.Workspace != ""},
 			{"bridges", len(cfg.Bridges) > 0},
+			{"mcp", len(cfg.MCP) > 0},
 		}},
 	} {
 		if set := fieldsSet(group.fields); set != "" {

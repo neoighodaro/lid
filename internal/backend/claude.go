@@ -99,9 +99,9 @@ func claudeSettingsWithTheme(cfg *config.Config, theme string) map[string]any {
 		want["theme"] = theme
 		want["themeId"] = theme
 	}
-	if len(cfg.Claude.Plugins.Install) > 0 {
-		enabled := make(map[string]any, len(cfg.Claude.Plugins.Install))
-		for _, plugin := range cfg.Claude.Plugins.Install {
+	if plugins := append(append([]string{}, cfg.Claude.Plugins.Install...), cfg.Claude.Plugins.InstallOptional...); len(plugins) > 0 {
+		enabled := make(map[string]any, len(plugins))
+		for _, plugin := range plugins {
 			enabled[plugin] = true
 		}
 		want["enabledPlugins"] = enabled

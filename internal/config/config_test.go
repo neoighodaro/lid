@@ -523,6 +523,19 @@ func TestLoadRejectsBridgeWithBadPorts(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsBadMCPNames(t *testing.T) {
+	for _, body := range []string{
+		"name: lid\nmcp:\n  - \"\"\n",
+		"name: lid\nmcp:\n  - gaia,context7\n",
+		"name: lid\nmcp:\n  - none\n",
+	} {
+		err := loadBodyErr(t, body)
+		if !strings.Contains(err.Error(), "mcp") {
+			t.Errorf("error = %q, want it to mention mcp", err.Error())
+		}
+	}
+}
+
 func TestLoadParsesScripts(t *testing.T) {
 	cfg := loadBody(t, "name: lid\nscripts:\n  on_create:\n    - pnpm install\n  on_start:\n    - ./warm.sh\n")
 

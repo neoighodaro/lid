@@ -4,21 +4,31 @@ DATE    ?= $(shell date -u +%Y-%m-%d)
 
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 DIST    := dist
+INSTALL_DIR ?= $(HOME)/Developer/bin
 
-.PHONY: build release mac mac-arm64 mac-amd64 assets test vet fmt check clean
+.PHONY: build install release mac mac-arm64 mac-amd64 assets test vet fmt check clean
 
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
-# Builds the ./lid artifact that ~/.local/bin/lid symlinks to. Host only:
-# inside the sandbox this would write a Linux binary the Mac cannot exec.
+# Builds the ./lid artifact. Host only: inside the sandbox this would write
+# a Linux binary the Mac cannot exec.
 build:
 	@if [ "$(IS_SANDBOX)" = "1" ]; then \
-		echo "make build writes ./lid, which ~/.local/bin/lid symlinks to."; \
+		echo "make build writes ./lid for this Mac."; \
 		echo "Inside the sandbox that produces a Linux binary macOS cannot exec."; \
 		echo "Run 'make mac' instead, or build on the host."; \
 		exit 1; \
 	fi
 	go build -ldflags "$(LDFLAGS)" -o lid .
+
+# Builds ./lid and installs it over the lid on PATH in $(INSTALL_DIR). It goes
+# in through a rename, so a running lid is never overwritten in place. 'lid
+# update' then sees a source build and asks before putting a release back.
+install: build
+	@mkdir -p $(INSTALL_DIR)
+	cp lid $(INSTALL_DIR)/.lid-install
+	mv -f $(INSTALL_DIR)/.lid-install $(INSTALL_DIR)/lid
+	@$(INSTALL_DIR)/lid --version
 
 release:
 	go build -ldflags "-s -w $(LDFLAGS)" -o lid .
