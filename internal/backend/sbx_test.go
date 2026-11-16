@@ -17,6 +17,7 @@ import (
 // every command lid would run so the tests never need either binary.
 type sbxFake struct {
 	missing   bool
+	version   string
 	sandboxes []string
 	hash      string
 	calls     [][]string
@@ -32,6 +33,13 @@ func (f *sbxFake) host() Host {
 		},
 		Output: func(argv []string) ([]byte, error) {
 			f.calls = append(f.calls, argv)
+			if len(argv) == 2 && argv[1] == "version" {
+				version := f.version
+				if version == "" {
+					version = "sbx version v" + sbxMinVersion + " 4bec4a5ce093466e54b034146965b143d065dc09"
+				}
+				return []byte(version + "\n"), nil
+			}
 			if len(argv) > 2 && argv[1] == "ls" {
 				return []byte(strings.Join(f.sandboxes, "\n") + "\n"), nil
 			}
@@ -106,6 +114,39 @@ func TestSbxNeedsTheSbxCli(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "sbx") {
 		t.Errorf("error = %q, want it to name sbx", err.Error())
+	}
+}
+
+func TestSbxRejectsAVersionThatCannotPinAnEmptyMCPSet(t *testing.T) {
+	f := &sbxFake{version: "sbx version v0.50.1 ddb0268d7124b9cf98955d0b08ffd71a0dfcebe4"}
+
+	err := Get(config.BackendSbx).EnsureAvailable(f.host())
+	if err == nil {
+		t.Fatal("sbx 0.50.1 was accepted, but it rejects --static-mcp none")
+	}
+	if !strings.Contains(err.Error(), "0.50.1") || !strings.Contains(err.Error(), sbxMinVersion) {
+		t.Errorf("error = %q, want it to name the found and required versions", err.Error())
+	}
+}
+
+func TestSbxAcceptsASupportedVersion(t *testing.T) {
+	for _, version := range []string{
+		"sbx version v" + sbxMinVersion + " 4bec4a5ce093466e54b034146965b143d065dc09",
+		"sbx version v0.60.2 1234567",
+		"sbx version v1.0.0 abcdef0",
+	} {
+		f := &sbxFake{version: version}
+		if err := Get(config.BackendSbx).EnsureAvailable(f.host()); err != nil {
+			t.Errorf("%q rejected: %v", version, err)
+		}
+	}
+}
+
+func TestSbxVersionCheckExplainsUnreadableOutput(t *testing.T) {
+	f := &sbxFake{version: "something else entirely"}
+
+	if err := Get(config.BackendSbx).EnsureAvailable(f.host()); err == nil {
+		t.Error("unparseable version output accepted")
 	}
 }
 

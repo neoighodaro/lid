@@ -18,6 +18,7 @@ const (
 	claudeSettingsFile = ".claude/settings.json"
 	claudeMemoryFile   = ".claude/CLAUDE.md"
 	sbxShellRCFile     = ".lid-shellrc"
+	sbxMinVersion      = "0.54.0"
 )
 
 type sbx struct{}
@@ -31,7 +32,18 @@ func (sbx) EnsureAvailable(h Host) error {
 				WithFix("install Docker Sandboxes from https://docs.docker.com/ai/sandboxes/, or set 'backend: %s' to cage a host process instead", config.BackendNono)
 		}
 	}
-	return nil
+	out, err := h.output([]string{"sbx", "version"})
+	if err != nil {
+		return failure.New("cannot run 'sbx version': %s", firstLine(out)).
+			WithFix("check that the sbx on your PATH runs")
+	}
+	return checkMinVersion(minVersion{
+		tool:    "sbx",
+		command: "sbx version",
+		min:     sbxMinVersion,
+		why:     "lid needs for 'mcp:' (--static-mcp none)",
+		which:   "Docker Sandboxes",
+	}, out)
 }
 
 func (sbx) Validate(cfg *config.Config) ([]string, error) {
