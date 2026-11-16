@@ -77,6 +77,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"env_file", strings.Join(cfg.EnvFile, ", ")},
 		{"network", strings.Join(cfg.Network, ", ")},
 		{"network_profile", cfg.NetworkProfile},
+		{"audit", boolRow(cfg.Audit)},
 		{"allow_commands", strings.Join(cfg.AllowCommands, ", ")},
 		{"paths.read", strings.Join(cfg.Paths.Read, ", ")},
 		{"paths.read_file", strings.Join(cfg.Paths.ReadFile, ", ")},

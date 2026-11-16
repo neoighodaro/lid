@@ -603,12 +603,28 @@ func TestSbxPointsTheStatusLineAtTheForkTheDashboardCameFrom(t *testing.T) {
 	}
 }
 
+// Auto mode's classifier calls api.anthropic.com from inside the sandbox, and
+// without it every tool call that needs a verdict fails.
+func TestSbxAllowsTheAnthropicAPIForClaude(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+	if allow := sbxNetworkAllow(cfg); !contains(allow, "api.anthropic.com") {
+		t.Errorf("allow = %v, want api.anthropic.com for claude-code", allow)
+	}
+}
+
+func TestSbxAddsNoAgentHostsForOtherAgents(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nagent: codex\n")
+	if allow := sbxNetworkAllow(cfg); contains(allow, "api.anthropic.com") {
+		t.Errorf("allow = %v, want no anthropic host for a non-claude agent", allow)
+	}
+}
+
 // The broker is reached through host.docker.internal but allowed as localhost,
 // so the default URL must not put host.docker.internal in the policy.
 func TestABrokerOnTheHostIsAllowedAsLocalhost(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n")
-	if allow := sbxNetworkAllow(cfg); len(allow) != 1 || allow[0] != "localhost:8787" {
-		t.Errorf("allow = %v, want [localhost:8787]", allow)
+	if allow := sbxNetworkAllow(cfg); !contains(allow, "localhost:8787") || contains(allow, "host.docker.internal:8787") {
+		t.Errorf("allow = %v, want localhost:8787 and not host.docker.internal", allow)
 	}
 }
 
@@ -616,7 +632,7 @@ func TestABrokerOnTheHostIsAllowedAsLocalhost(t *testing.T) {
 // localhost for it would leave the sandbox blocked from the URL it was handed.
 func TestABrokerElsewhereIsAllowedUnderItsOwnHost(t *testing.T) {
 	cfg := sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n  url: http://192.168.1.5:9000\n")
-	if allow := sbxNetworkAllow(cfg); len(allow) != 1 || allow[0] != "192.168.1.5:9000" {
+	if allow := sbxNetworkAllow(cfg); !contains(allow, "192.168.1.5:9000") || contains(allow, "localhost:9000") {
 		t.Errorf("allow = %v, want [192.168.1.5:9000], the host the agent is told to reach", allow)
 	}
 }

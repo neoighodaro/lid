@@ -349,7 +349,7 @@ func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) 
 		verb = "shell"
 	}
 
-	argv := []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
+	argv := nonoShellArgv(cfg, verb, profilePath)
 	if len(command) > 0 {
 		argv = append(argv, "--")
 		argv = append(argv, command...)
@@ -384,8 +384,15 @@ func (nono) ShellArgv(_ Host, cfg *config.Config, profilePath string, command []
 	return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "--rcfile", rc, "-i"), nil
 }
 
+// nonoShellArgv leaves the audit trail off unless audit: asks for it. Its
+// network buffer holds 4096 events a session, and a long agent session fills
+// it, after which nono warns on every request. Only 'nono run' takes the flag.
 func nonoShellArgv(cfg *config.Config, verb, profilePath string) []string {
-	return []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
+	argv := []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
+	if verb == "run" && !cfg.Audit {
+		argv = append(argv, "--no-audit")
+	}
+	return argv
 }
 
 func nonoShellRCPath(cfg *config.Config) string {

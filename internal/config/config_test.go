@@ -1189,12 +1189,20 @@ func TestSbxRejectsANetworkProfileItCannotApply(t *testing.T) {
 	}
 }
 
+func TestSbxRejectsAnAuditItCannotKeep(t *testing.T) {
+	cfg := &Config{Name: "api", Agent: DefaultAgent, Backend: BackendSbx, Audit: true}
+
+	if err := cfg.Validate(); err == nil {
+		t.Error("audit was accepted under sbx, where it silently does nothing")
+	}
+}
+
 func TestStarterNonoTemplateOffersTheKeysOnlyNonoHonours(t *testing.T) {
 	body, err := Starter(StarterOptions{Name: "probe", Backend: BackendNono})
 	if err != nil {
 		t.Fatalf("Starter: %v", err)
 	}
-	for _, key := range []string{"allow_commands:", "network_profile:"} {
+	for _, key := range []string{"allow_commands:", "network_profile:", "audit:"} {
 		if !strings.Contains(body, key) {
 			t.Errorf("the nono template does not offer %s, which only that backend honours", key)
 		}

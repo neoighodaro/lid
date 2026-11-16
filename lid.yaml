@@ -65,4 +65,6 @@ backends:
   nono:
     paths:
       allow:
+        - ~/Developer/ck
+        - ~/Developer/pinktum
         - ~/Developer/dotfiles/configs/claude/skills/synced
