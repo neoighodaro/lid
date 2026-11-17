@@ -114,7 +114,12 @@ func (s sbx) Provision(h Host, cfg *config.Config, opts Options) (Provisioned, e
 		}
 	}
 
-	for _, argv := range sbxSteps(cfg) {
+	create, warnings, err := sbxWithRegisteredMCP(h, cfg)
+	if err != nil {
+		return Provisioned{}, err
+	}
+
+	for _, argv := range sbxSteps(create) {
 		if err := h.exec(argv); err != nil {
 			return Provisioned{}, failure.New("%s failed", strings.Join(argv[:2], " ")).
 				WithFix("the output above says why; %v", err)
@@ -126,7 +131,33 @@ func (s sbx) Provision(h Host, cfg *config.Config, opts Options) (Provisioned, e
 			WithFix("the output above says why; %v", err)
 	}
 
-	return Provisioned{Path: image, Ref: cfg.Name, Changed: true}, nil
+	return Provisioned{Path: image, Ref: cfg.Name, Changed: true, Warnings: warnings}, nil
+}
+
+func sbxWithRegisteredMCP(h Host, cfg *config.Config) (*config.Config, []string, error) {
+	if len(cfg.MCP) == 0 {
+		return cfg, nil, nil
+	}
+	out, err := h.output([]string{"sbx", "mcp", "ls", "--quiet"})
+	if err != nil {
+		return nil, nil, failure.New("cannot list the MCP servers registered with sbx").
+			WithFix("the output says why: %s", strings.TrimSpace(out))
+	}
+	registered := map[string]bool{}
+	for _, name := range strings.Fields(out) {
+		registered[name] = true
+	}
+	create := *cfg
+	create.MCP = nil
+	var warnings []string
+	for _, name := range cfg.MCP {
+		if registered[name] {
+			create.MCP = append(create.MCP, name)
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("skipping MCP server %s: it is not registered with sbx; register it with 'sbx mcp add', then rebuild", name))
+	}
+	return &create, warnings, nil
 }
 
 func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {

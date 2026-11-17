@@ -20,6 +20,7 @@ type sbxFake struct {
 	version   string
 	sandboxes []string
 	hash      string
+	mcp       []string
 	calls     [][]string
 }
 
@@ -39,6 +40,9 @@ func (f *sbxFake) host() Host {
 					version = "sbx version v" + sbxMinVersion + " 4bec4a5ce093466e54b034146965b143d065dc09"
 				}
 				return []byte(version + "\n"), nil
+			}
+			if len(argv) > 2 && argv[1] == "mcp" && argv[2] == "ls" {
+				return []byte(strings.Join(f.mcp, "\n") + "\n"), nil
 			}
 			if len(argv) > 2 && argv[1] == "ls" {
 				return []byte(strings.Join(f.sandboxes, "\n") + "\n"), nil
@@ -1014,5 +1018,33 @@ func TestSbxWarnsAboutASkippedLocalMarketplace(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "skipping marketplace "+missing) {
 		t.Errorf("warnings = %v, want one about the skipped marketplace", warnings)
+	}
+}
+
+func TestSbxSkipsMCPServersThatAreNotRegistered(t *testing.T) {
+	f := &sbxFake{mcp: []string{"gaia-api", "tinkerwell"}}
+	cfg := sbxCfg(t, "name: api\nmcp:\n  - gaia-api\n  - gaia-web\n")
+
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx create", "--static-mcp gaia-api ") {
+		t.Errorf("calls:\n%s\nwant sbx create with only gaia-api", f.lines())
+	}
+	if len(provisioned.Warnings) != 1 || !strings.Contains(provisioned.Warnings[0], "skipping MCP server gaia-web") {
+		t.Errorf("warnings = %v, want one about gaia-web", provisioned.Warnings)
+	}
+}
+
+func TestSbxGivesNoMCPServersWhenNoneListedAreRegistered(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nmcp:\n  - gaia-api\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx create", "--static-mcp none ") {
+		t.Errorf("calls:\n%s\nwant sbx create with --static-mcp none", f.lines())
 	}
 }

@@ -62,11 +62,12 @@ type State struct {
 }
 
 type Provisioned struct {
-	Path    string
-	Ref     string
-	Changed bool
-	Stale   bool
-	Notes   []string
+	Path     string
+	Ref      string
+	Changed  bool
+	Stale    bool
+	Notes    []string
+	Warnings []string
 }
 
 var registry = map[string]Backend{
