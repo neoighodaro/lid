@@ -64,10 +64,7 @@ func InstallHandoffSkill(h Host, cfg *config.Config, force bool) (string, error)
 			WithFix("the API in it is plain HTTP; teach your agent to reach %s yourself", cfg.HandoffURL())
 	}
 	if cfg.BuildsImage() {
-		if err := sbxWriteHandoffSkill(h, cfg); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("~/%s in the %s sandbox", handoffSkillFile, cfg.Name), nil
+		return sbxWriteHandoffSkill(h, cfg)
 	}
 	return installHandoffSkillOnHost(force)
 }
