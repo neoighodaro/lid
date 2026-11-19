@@ -114,7 +114,12 @@ func (s sbx) Provision(h Host, cfg *config.Config, opts Options) (Provisioned, e
 		}
 	}
 
-	for _, argv := range sbxSteps(cfg) {
+	create, warnings, err := sbxWithRegisteredMCP(h, cfg)
+	if err != nil {
+		return Provisioned{}, err
+	}
+
+	for _, argv := range sbxSteps(create) {
 		if err := h.exec(argv); err != nil {
 			return Provisioned{}, failure.New("%s failed", strings.Join(argv[:2], " ")).
 				WithFix("the output above says why; %v", err)
@@ -126,7 +131,33 @@ func (s sbx) Provision(h Host, cfg *config.Config, opts Options) (Provisioned, e
 			WithFix("the output above says why; %v", err)
 	}
 
-	return Provisioned{Path: image, Ref: cfg.Name, Changed: true}, nil
+	return Provisioned{Path: image, Ref: cfg.Name, Changed: true, Warnings: warnings}, nil
+}
+
+func sbxWithRegisteredMCP(h Host, cfg *config.Config) (*config.Config, []string, error) {
+	if len(cfg.MCP) == 0 {
+		return cfg, nil, nil
+	}
+	out, err := h.output([]string{"sbx", "mcp", "ls", "--quiet"})
+	if err != nil {
+		return nil, nil, failure.New("cannot list the MCP servers registered with sbx").
+			WithFix("the output says why: %s", strings.TrimSpace(out))
+	}
+	registered := map[string]bool{}
+	for _, name := range strings.Fields(out) {
+		registered[name] = true
+	}
+	create := *cfg
+	create.MCP = nil
+	var warnings []string
+	for _, name := range cfg.MCP {
+		if registered[name] {
+			create.MCP = append(create.MCP, name)
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf("skipping MCP server %s: it is not registered with sbx; register it with 'sbx mcp add', then rebuild", name))
+	}
+	return &create, warnings, nil
 }
 
 func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
@@ -139,10 +170,12 @@ func (s sbx) PrepareAgent(h Host, cfg *config.Config) error {
 	if err := sbxApplySettings(h, cfg); err != nil {
 		return err
 	}
-	if err := sbxApplyHandoffSkill(h, cfg); err != nil {
+	// The handoff skill goes last: it is the one step that can fail on a file
+	// the host owns, and that must not cost the agent its memory.
+	if err := sbxApplyMemory(h, cfg); err != nil {
 		return err
 	}
-	return sbxApplyMemory(h, cfg)
+	return sbxApplyHandoffSkill(h, cfg)
 }
 
 func sbxApplySettings(h Host, cfg *config.Config) error {
@@ -199,15 +232,33 @@ func sbxApplyHandoffSkill(h Host, cfg *config.Config) error {
 	if !cfg.Handoff.Enabled {
 		return nil
 	}
-	return sbxWriteHandoffSkill(h, cfg)
+	_, err := sbxWriteHandoffSkill(h, cfg)
+	return err
 }
 
-func sbxWriteHandoffSkill(h Host, cfg *config.Config) error {
-	if out, err := h.output(sbxWriteHomeFileArgv(cfg, handoffSkillFile, handoffSkill)); err != nil {
-		return failure.New("cannot write the handoff skill in the %s sandbox: %s", cfg.Name, firstLine(out)).
-			WithFix("the agent would not know how to reach the broker %s enables", cfg.Ref())
+// sbxWriteHandoffSkill puts lid's handoff skill in the sandbox and says where
+// it landed. lid's copy is the source of truth, so when sbx shares the host's
+// skill read-only and it says something else, the host copy is replaced: sbx
+// shows the change to the sandbox straight away.
+func sbxWriteHandoffSkill(h Host, cfg *config.Config) (string, error) {
+	out, err := h.output(sbxWriteHomeFileArgv(cfg, handoffSkillFile, handoffSkill))
+	if err == nil {
+		return fmt.Sprintf("~/%s in the %s sandbox", handoffSkillFile, cfg.Name), nil
 	}
-	return nil
+	if sbxHandoffSkillShared(h, cfg) {
+		return installHandoffSkillOnHost(true)
+	}
+	return "", failure.New("cannot write the handoff skill in the %s sandbox: %s", cfg.Name, firstLine(out)).
+		WithFix("the agent would not know how to reach the broker %s enables", cfg.Ref())
+}
+
+// sbxHandoffSkillShared reports whether the skill directory is one sbx shares
+// from the host: a symlink into a mount the sandbox cannot write to.
+func sbxHandoffSkillShared(h Host, cfg *config.Config) bool {
+	dir := "$HOME/" + filepath.Dir(handoffSkillFile)
+	probe := fmt.Sprintf(`if [ -L %q ] && [ ! -w %q ]; then echo shared; fi`, dir, dir+"/")
+	out, err := h.output(sbxSelfArgv(cfg, probe))
+	return err == nil && strings.TrimSpace(out) == "shared"
 }
 
 func (s sbx) StartArgv(cfg *config.Config, _ string) ([]string, error) {
@@ -418,15 +469,27 @@ func sbxReadSettingsArgv(cfg *config.Config) []string {
 	return sbxSelfArgv(cfg, read)
 }
 
+// sbxWriteHomeFileArgv writes a file under the sandbox's home, leaving it alone
+// when it already says the same thing. That matters for files sbx shares from
+// the host: ~/.claude/skills/<name> is a symlink into a read-only mount, so the
+// handoff skill a host already has cannot be written over, only left in place.
+// The body is staged in a temp file so the comparison needs nothing beyond
+// coreutils, and a changed file still lands with a single rename.
 func sbxWriteHomeFileArgv(cfg *config.Config, rel, body string) []string {
 	path := "$HOME/" + rel
 	script := fmt.Sprintf(`set -e
-mkdir -p %q
-cat > %q <<'LID_FILE'
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp" <<'LID_FILE'
 %s
 LID_FILE
+if [ -f %q ] && [ "$(cat %q)" = "$(cat "$tmp")" ]; then
+  exit 0
+fi
+mkdir -p %q
+cat "$tmp" > %q
 mv %q %q
-`, filepath.Dir(path), path+".lid", strings.TrimRight(body, "\n"), path+".lid", path)
+`, strings.TrimRight(body, "\n"), path, path, filepath.Dir(path), path+".lid", path+".lid", path)
 	return sbxSelfArgv(cfg, script)
 }
 

@@ -20,7 +20,11 @@ type sbxFake struct {
 	version   string
 	sandboxes []string
 	hash      string
+	mcp       []string
 	calls     [][]string
+	// script, when set, answers the scripts lid runs in the sandbox; returning
+	// handled=false falls through to the default answers.
+	script func(script string) (out []byte, err error, handled bool)
 }
 
 func (f *sbxFake) host() Host {
@@ -33,12 +37,20 @@ func (f *sbxFake) host() Host {
 		},
 		Output: func(argv []string) ([]byte, error) {
 			f.calls = append(f.calls, argv)
+			if f.script != nil && len(argv) > 1 && argv[1] == "exec" {
+				if out, err, handled := f.script(argv[len(argv)-1]); handled {
+					return out, err
+				}
+			}
 			if len(argv) == 2 && argv[1] == "version" {
 				version := f.version
 				if version == "" {
 					version = "sbx version v" + sbxMinVersion + " 4bec4a5ce093466e54b034146965b143d065dc09"
 				}
 				return []byte(version + "\n"), nil
+			}
+			if len(argv) > 2 && argv[1] == "mcp" && argv[2] == "ls" {
+				return []byte(strings.Join(f.mcp, "\n") + "\n"), nil
 			}
 			if len(argv) > 2 && argv[1] == "ls" {
 				return []byte(strings.Join(f.sandboxes, "\n") + "\n"), nil
@@ -1014,5 +1026,157 @@ func TestSbxWarnsAboutASkippedLocalMarketplace(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "skipping marketplace "+missing) {
 		t.Errorf("warnings = %v, want one about the skipped marketplace", warnings)
+	}
+}
+
+func TestSbxSkipsMCPServersThatAreNotRegistered(t *testing.T) {
+	f := &sbxFake{mcp: []string{"gaia-api", "tinkerwell"}}
+	cfg := sbxCfg(t, "name: api\nmcp:\n  - gaia-api\n  - gaia-web\n")
+
+	provisioned, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx create", "--static-mcp gaia-api ") {
+		t.Errorf("calls:\n%s\nwant sbx create with only gaia-api", f.lines())
+	}
+	if len(provisioned.Warnings) != 1 || !strings.Contains(provisioned.Warnings[0], "skipping MCP server gaia-web") {
+		t.Errorf("warnings = %v, want one about gaia-web", provisioned.Warnings)
+	}
+}
+
+func TestSbxGivesNoMCPServersWhenNoneListedAreRegistered(t *testing.T) {
+	f := &sbxFake{}
+	cfg := sbxCfg(t, "name: api\nmcp:\n  - gaia-api\n")
+
+	if _, err := Get(config.BackendSbx).Provision(f.host(), cfg, Options{}); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !f.ran("sbx create", "--static-mcp none ") {
+		t.Errorf("calls:\n%s\nwant sbx create with --static-mcp none", f.lines())
+	}
+}
+
+// TestWritingAHomeFileLeavesAnIdenticalReadOnlyOneAlone is the handoff skill sbx
+// shares from the host: ~/.claude/skills/handoff points into a read-only mount,
+// and when it already holds lid's skill, starting the sandbox must not fail on it.
+func TestWritingAHomeFileLeavesAnIdenticalReadOnlyOneAlone(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\n")
+	home := t.TempDir()
+	dir := filepath.Join(home, ".claude", "skills", "handoff")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(handoffSkill), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+
+	run := func(body string) ([]byte, error) {
+		argv := sbxWriteHomeFileArgv(cfg, handoffSkillFile, body)
+		cmd := exec.Command("bash", "-c", argv[len(argv)-1])
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		return cmd.CombinedOutput()
+	}
+
+	if out, err := run(handoffSkill); err != nil {
+		t.Errorf("writing the same skill over a read-only copy failed: %v\n%s", err, out)
+	}
+	if _, err := run("a different skill"); err == nil {
+		t.Error("a different skill reported success without being able to write it")
+	}
+
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("a different skill"); err != nil {
+		t.Fatalf("writing a changed skill failed: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "SKILL.md")); string(got) != "a different skill\n" {
+		t.Errorf("SKILL.md = %q, want the changed skill", got)
+	}
+}
+
+// sharedSkillFake is a sandbox where sbx shares the host's handoff skill
+// read-only: writing it fails, and the probe sees the read-only symlink.
+func sharedSkillFake(shared bool) *sbxFake {
+	return &sbxFake{hash: "written", script: func(script string) ([]byte, error, bool) {
+		switch {
+		case strings.Contains(script, handoffSkillFile+".lid"):
+			return []byte("bash: line 3: SKILL.md.lid: Read-only file system\n"), errors.New("exit status 1"), true
+		case strings.Contains(script, "echo shared"):
+			if shared {
+				return []byte("shared\n"), nil, true
+			}
+			return nil, nil, true
+		}
+		return nil, nil, false
+	}}
+}
+
+// lid's skill is the source of truth: a host copy that sbx shares into the
+// sandbox and that says something else is replaced, so the agent gets lid's.
+func TestStartingReplacesADifferentHandoffSkillSharedFromTheHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, filepath.FromSlash(handoffSkillFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("an older handoff skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nmemory: remember this\nhandoff:\n  enabled: true\n")
+	f := sharedSkillFake(true)
+
+	if err := Get(config.BackendSbx).PrepareAgent(f.host(), cfg); err != nil {
+		t.Fatalf("PrepareAgent: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != handoffSkill {
+		t.Errorf("the host copy was not replaced with lid's skill:\n%s", got)
+	}
+	if !f.ran(claudeMemoryFile) {
+		t.Errorf("the agent's memory was not written:\n%s", f.lines())
+	}
+}
+
+func TestInstallingTheSkillInASandboxThatSharesTheHostsReplacesTheHostCopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := sbxCfg(t, "name: api\nhandoff:\n  enabled: true\n")
+
+	where, err := InstallHandoffSkill(sharedSkillFake(true).host(), cfg, false)
+	if err != nil {
+		t.Fatalf("InstallHandoffSkill: %v", err)
+	}
+	path := filepath.Join(home, filepath.FromSlash(handoffSkillFile))
+	if where != path {
+		t.Errorf("installed at %q, want the host copy %q", where, path)
+	}
+	if got, _ := os.ReadFile(path); string(got) != handoffSkill {
+		t.Errorf("the host copy is not lid's skill:\n%s", got)
+	}
+}
+
+// A write that fails for any other reason leaves the host alone and still
+// costs the agent nothing it was given before the skill.
+func TestAHandoffSkillThatCannotBeWrittenLeavesTheHostAlone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := sbxCfg(t, "name: api\nagent: claude-code\nmemory: remember this\nhandoff:\n  enabled: true\n")
+	f := sharedSkillFake(false)
+
+	err := Get(config.BackendSbx).PrepareAgent(f.host(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "cannot write the handoff skill") {
+		t.Fatalf("PrepareAgent = %v, want the write failure", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, filepath.FromSlash(handoffSkillFile))); err == nil {
+		t.Error("a skill was written on the host for a sandbox that does not share it")
+	}
+	if !f.ran(claudeMemoryFile) {
+		t.Errorf("the agent's memory was not written:\n%s", f.lines())
 	}
 }

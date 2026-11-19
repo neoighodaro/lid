@@ -119,6 +119,9 @@ func provisionSandbox(cmd *cobra.Command, a *app.App, b backend.Backend, cfg *co
 	if err != nil {
 		return backend.Provisioned{}, err
 	}
+	for _, warning := range provisioned.Warnings {
+		fmt.Fprintln(a.Err, ui.Err.Warn.Render(warning))
+	}
 	for _, note := range provisioned.Notes {
 		fmt.Fprintln(a.Err, ui.Err.Info.Render(note))
 	}
