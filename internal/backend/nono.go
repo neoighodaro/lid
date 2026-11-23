@@ -335,7 +335,7 @@ func ensureNonoPack(h Host, pack string) (bool, error) {
 // resolves $WORKDIR to the project root the profile was written for, and
 // --allow-cwd answers the share prompt the profile's workdir access already
 // implies. The access level still comes from the profile, not the flag.
-func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) {
+func (nono) StartArgv(cfg *config.Config, profilePath string, agentArgs []string) ([]string, error) {
 	command, ok := nonoAgentCommands[cfg.Agent]
 	if !ok {
 		return nil, failure.New("the nono backend cannot launch agent %q", cfg.Agent).
@@ -352,6 +352,7 @@ func (nono) StartArgv(cfg *config.Config, profilePath string) ([]string, error) 
 	if len(command) > 0 {
 		argv = append(argv, "--")
 		argv = append(argv, command...)
+		argv = append(argv, agentArgs...)
 	}
 	return argv, nil
 }

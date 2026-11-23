@@ -195,7 +195,7 @@ func TestProvisionReportsWhatNonoSaidWhenItRejectsTheProfile(t *testing.T) {
 func TestStartArgvRunsTheAgentUnderTheProfile(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\n")
 
-	argv, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc")
+	argv, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc", nil)
 	if err != nil {
 		t.Fatalf("StartArgv: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestStartArgvRunsTheAgentUnderTheProfile(t *testing.T) {
 func TestStartArgvHandsTheShellAgentToNonoShell(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\nagent: shell\n")
 
-	argv, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc")
+	argv, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc", nil)
 	if err != nil {
 		t.Fatalf("StartArgv: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestStartArgvLeavesTheAuditTrailOffUnlessAsked(t *testing.T) {
 		"name: lid\nbackend: nono\n":              true,
 		"name: lid\nbackend: nono\naudit: true\n": false,
 	} {
-		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc")
+		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc", nil)
 		if err != nil {
 			t.Fatalf("StartArgv: %v", err)
 		}
@@ -252,7 +252,7 @@ func TestStartArgvLeavesTheAuditTrailOffUnlessAsked(t *testing.T) {
 }
 
 func TestStartArgvKeepsNoAuditOffNonoShell(t *testing.T) {
-	argv, err := Get("nono").StartArgv(cfgFor(t, "name: lid\nagent: shell\n"), "/tmp/nono.jsonc")
+	argv, err := Get("nono").StartArgv(cfgFor(t, "name: lid\nagent: shell\n"), "/tmp/nono.jsonc", nil)
 	if err != nil {
 		t.Fatalf("StartArgv: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestStartArgvKeepsNoAuditOffNonoShell(t *testing.T) {
 func TestStartArgvRefusesAnAgentNonoCannotSandbox(t *testing.T) {
 	cfg := cfgFor(t, "name: lid\nagent: gemini\nbackend: nono\n")
 
-	if _, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc"); err == nil {
+	if _, err := Get("nono").StartArgv(cfg, "/tmp/nono.jsonc", nil); err == nil {
 		t.Fatal("StartArgv accepted an agent the backend cannot launch")
 	}
 }
@@ -300,7 +300,7 @@ func TestProvisionNamesTheProfileRelativeToTheProject(t *testing.T) {
 
 func TestStartArgvGrantsTheProjectDirectoryWithoutPrompting(t *testing.T) {
 	for _, body := range []string{"name: lid\n", "name: lid\nagent: shell\n"} {
-		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc")
+		argv, err := Get("nono").StartArgv(cfgFor(t, body), "/tmp/nono.jsonc", nil)
 		if err != nil {
 			t.Fatalf("StartArgv: %v", err)
 		}

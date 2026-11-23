@@ -163,7 +163,7 @@ func TestSbxVersionCheckExplainsUnreadableOutput(t *testing.T) {
 }
 
 func TestSbxStartAttachesToTheNamedSandbox(t *testing.T) {
-	argv, err := Get(config.BackendSbx).StartArgv(sbxCfg(t, "name: api\n"), "")
+	argv, err := Get(config.BackendSbx).StartArgv(sbxCfg(t, "name: api\n"), "", nil)
 	if err != nil {
 		t.Fatalf("StartArgv: %v", err)
 	}

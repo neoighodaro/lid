@@ -52,6 +52,7 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		newBuildCommand(a),
 		newStartCommand(a),
 		newRestartCommand(a),
+		newResumeCommand(a),
 		newShellCommand(a),
 		newStatusCommand(a),
 		newDoctorCommand(a),
