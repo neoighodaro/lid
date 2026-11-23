@@ -261,8 +261,12 @@ func sbxHandoffSkillShared(h Host, cfg *config.Config) bool {
 	return err == nil && strings.TrimSpace(out) == "shared"
 }
 
-func (s sbx) StartArgv(cfg *config.Config, _ string) ([]string, error) {
-	return s.startArgv(cfg), nil
+func (s sbx) StartArgv(cfg *config.Config, _ string, agentArgs []string) ([]string, error) {
+	argv := s.startArgv(cfg)
+	if len(agentArgs) > 0 {
+		argv = append(append(argv, "--"), agentArgs...)
+	}
+	return argv, nil
 }
 
 func (sbx) startArgv(cfg *config.Config) []string {

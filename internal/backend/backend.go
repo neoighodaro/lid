@@ -20,7 +20,7 @@ type Backend interface {
 	Render(cfg *config.Config) (string, error)
 	Provision(h Host, cfg *config.Config, opts Options) (Provisioned, error)
 	PrepareAgent(h Host, cfg *config.Config) error
-	StartArgv(cfg *config.Config, profilePath string) ([]string, error)
+	StartArgv(cfg *config.Config, profilePath string, agentArgs []string) ([]string, error)
 	// ShellArgv is the command that opens a shell in the sandbox, or runs one
 	// command in it when command is non-empty. It takes a Host because an
 	// interactive session needs its init file materialized first, and only the

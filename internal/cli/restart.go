@@ -72,7 +72,7 @@ func newRestartCommand(a *app.App) *cobra.Command {
 				return err
 			}
 
-			argv, err := b.StartArgv(cfg, provisioned.Path)
+			argv, err := b.StartArgv(cfg, provisioned.Path, nil)
 			if err != nil {
 				return err
 			}
