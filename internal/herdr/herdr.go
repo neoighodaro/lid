@@ -8,7 +8,7 @@ import (
 	"os/exec"
 )
 
-const tabPrefix = "\uf023 " // nerd-font lock, as zellij tabs get
+const tabPrefix = "🔒 " // an emoji, not the nerd-font lock zellij tabs get: Herdr's tab bar has no nerd font
 
 // Session is the Herdr terminal lid runs in. Herdr sets HC_TERMINAL_ID in
 // every terminal it runs; outside Herdr it is empty and Session does nothing.
