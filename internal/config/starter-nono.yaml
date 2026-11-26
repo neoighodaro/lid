@@ -115,9 +115,8 @@ scripts:
   on_start: []
     # - ./scripts/warm-cache.sh
 
-# Name for this project's zellij tab, when lid starts inside zellij.
-# zellij:
-#   display_name: my-project
+# Name for the terminal tab lid starts in, inside zellij or Herdr.
+# display_name: my-project
 
 # What 'lid shell' opens. Set either key and the shell becomes bash, so it can
 # be handed an init file; leave both unset and you keep your own shell.

@@ -737,6 +737,7 @@ func TestKeysAppliedOnEveryStartDoNotMakeASandboxStale(t *testing.T) {
 		{"claude.settings", "name: lid\nclaude:\n  settings:\n    model: claude-opus-5\n"},
 		{"memory", "name: lid\nmemory: be nice\n"},
 		{"zellij", "name: lid\nzellij:\n  display_name: Lid\n"},
+		{"display_name", "name: lid\ndisplay_name: Lid\n"},
 		{"shell", "name: lid\nshell:\n  aliases:\n    g: git\n"},
 	} {
 		write(t, dir, "lid.yaml", added.body)
@@ -1251,6 +1252,7 @@ func TestFileHashIgnoresTheKeysAppliedOnEveryStart(t *testing.T) {
 		{"claude.settings", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-sonnet-5\nmemory: be brief\nzellij:\n  display_name: api\n"},
 		{"memory", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: say more\nzellij:\n  display_name: api\n"},
 		{"zellij.display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: web\n"},
+		{"display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: api\ndisplay_name: web\n"},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
 			if hashOfConfig(t, base) != hashOfConfig(t, tt.body) {
@@ -1390,5 +1392,39 @@ func TestCloneIsOffUnlessTheConfigAsksForIt(t *testing.T) {
 func TestCloneIsReadFromTheConfig(t *testing.T) {
 	if cfg := loadBody(t, "name: lid\nclone: true\n"); !cfg.Clone {
 		t.Error("Clone = false, want true")
+	}
+}
+
+func TestTabNameComesFromTheTopLevelDisplayName(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ndisplay_name: Lid\n")
+
+	if got := cfg.TabName(); got != "Lid" {
+		t.Errorf("TabName() = %q, want Lid", got)
+	}
+	if got := cfg.Deprecations(); len(got) != 0 {
+		t.Errorf("Deprecations() = %v for a config on the current keys", got)
+	}
+}
+
+func TestTabNameStillReadsTheDeprecatedZellijDisplayName(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nzellij:\n  display_name: Lid\n")
+
+	if got := cfg.TabName(); got != "Lid" {
+		t.Errorf("TabName() = %q, want Lid from zellij.display_name", got)
+	}
+	got := cfg.Deprecations()
+	if len(got) != 1 || !strings.Contains(got[0], "zellij.display_name") || !strings.Contains(got[0], "display_name:") {
+		t.Errorf("Deprecations() = %v, want one note naming zellij.display_name and where to move it", got)
+	}
+}
+
+func TestTabNamePrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ndisplay_name: new\nzellij:\n  display_name: old\n")
+
+	if got := cfg.TabName(); got != "new" {
+		t.Errorf("TabName() = %q, want new", got)
+	}
+	if got := cfg.Deprecations(); len(got) != 1 {
+		t.Errorf("Deprecations() = %v, want the leftover zellij.display_name flagged", got)
 	}
 }

@@ -131,6 +131,8 @@ type PHP struct {
 	Extensions []string `yaml:"extensions"`
 }
 
+// Zellij holds the old place for the tab name. Deprecated: use the top-level
+// display_name, which every terminal lid names a tab in reads.
 type Zellij struct {
 	DisplayName string `yaml:"display_name"`
 }
@@ -196,6 +198,7 @@ type Bridge struct {
 type Config struct {
 	Name           string            `yaml:"name"`
 	Agent          string            `yaml:"agent"`
+	DisplayName    string            `yaml:"display_name"`
 	Backend        string            `yaml:"backend"`
 	BaseImage      string            `yaml:"base_image"`
 	Template       string            `yaml:"template"`
@@ -719,6 +722,29 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
+// TabName is the name lid gives the terminal tab it starts in: the top-level
+// display_name, or the deprecated zellij.display_name when that is all there is.
+func (c *Config) TabName() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	return c.Zellij.DisplayName
+}
+
+// Deprecations lists the keys in the config that still work but should be
+// moved, each with where they go now.
+func (c *Config) Deprecations() []string {
+	var notes []string
+	if c.Zellij.DisplayName != "" {
+		note := "zellij.display_name in " + c.Ref() + " is deprecated; move it to a top-level display_name: " + c.Zellij.DisplayName
+		if c.DisplayName != "" {
+			note = "zellij.display_name in " + c.Ref() + " is deprecated and ignored, since display_name is set; remove it"
+		}
+		notes = append(notes, note)
+	}
+	return notes
+}
+
 // Ref names the config relative to the project, so generated files and error
 // messages never carry an absolute path from the machine that produced them.
 func (c *Config) Ref() string {
@@ -797,6 +823,7 @@ func withoutStartApplied(data []byte) []byte {
 func strippedJSON(doc map[string]any, fallback []byte) []byte {
 	delete(doc, "memory")
 	delete(doc, "zellij")
+	delete(doc, "display_name")
 	delete(doc, "shell")
 	if claude, ok := doc["claude"].(map[string]any); ok {
 		delete(claude, "settings")

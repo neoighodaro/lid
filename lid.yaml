@@ -1,8 +1,7 @@
 name: lid
 agent: claude-code
 backend: sbx
-zellij:
-  display_name: lid
+display_name: lid
 runtimes:
   node: "24"
   go: "1.27"

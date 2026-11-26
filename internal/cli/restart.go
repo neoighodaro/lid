@@ -62,7 +62,7 @@ func newRestartCommand(a *app.App) *cobra.Command {
 				fmt.Fprintln(a.Err, ui.Err.Info.Render("Stopped "+cfg.Name+" on "+other))
 			}
 
-			a.Zellij.RenameTab(cfg.Zellij.DisplayName)
+			nameTab(a, cfg)
 
 			provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: true})
 			if err != nil {
