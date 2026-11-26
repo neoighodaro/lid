@@ -14,6 +14,7 @@ import (
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/handoff"
+	"github.com/neoighodaro/lid/internal/herdr"
 	"github.com/neoighodaro/lid/internal/update"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
@@ -1096,6 +1097,7 @@ type sbxStartHost struct {
 	hash     string
 	settings string
 	paneID   string
+	herdrID  string
 	stdin    io.Reader
 	probes   [][]string
 	argv     []string
@@ -1110,6 +1112,16 @@ func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
 		return []byte("CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_7 lid\n"), nil
 	case strings.Contains(strings.Join(argv, " "), "list-tabs"):
 		return []byte(`[{"name": "Tab #1", "active": true, "are_floating_panes_visible": false}]`), nil
+	}
+	return nil, nil
+}
+
+// herdr answers as a Herdr window with terminal t7 in tab tb1, a tab that has
+// never been renamed.
+func (h *sbxStartHost) herdr(argv []string) ([]byte, error) {
+	h.probes = append(h.probes, argv)
+	if strings.Join(argv, " ") == "herdr-app ls" {
+		return []byte(`{"spaces": [{"id": "sp1", "tabs": [{"id": "tb1", "name": "1", "terminals": [{"terminal": "t7"}]}]}]}`), nil
 	}
 	return nil, nil
 }
@@ -1175,6 +1187,7 @@ func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) resu
 		Host:    backend.Host{LookPath: h.lookPath, Output: h.output, Exec: h.exec},
 		Attach:  h.attach,
 		Zellij:  zellij.Session{PaneID: h.paneID, Run: h.zellij},
+		Herdr:   herdr.Session{TerminalID: h.herdrID, Run: h.herdr},
 	}
 	root := NewRootCommand(a)
 	root.SetArgs(args)
@@ -1249,7 +1262,7 @@ func TestStartWarnsButStillLaunchesWhenTheSettingsCannotBeApplied(t *testing.T) 
 
 func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7"}
 
 	res := runSbxStart(t, dir, h, "start")
@@ -1259,6 +1272,54 @@ func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	}
 	if strings.Contains(res.err, "zellij") {
 		t.Errorf("zellij is wired up but still reported as ignored:\n%s", res.err)
+	}
+}
+
+func TestStartNamesTheHerdrTabItWasLaunchedFrom(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
+
+	res := runSbxStart(t, dir, h, "start")
+
+	if !h.ran("tab.rename --id tb1") {
+		t.Errorf("the Herdr tab kept its default name: %v", h.probes)
+	}
+	if strings.Contains(res.err, "deprecated") {
+		t.Errorf("warned about a config already on the current keys:\n%s", res.err)
+	}
+}
+
+func TestStartStillNamesTheTabFromTheDeprecatedZellijKeyAndSaysToMoveIt(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7", herdrID: "t7"}
+
+	res := runSbxStart(t, dir, h, "start")
+
+	if !h.ran("rename-tab") || !h.ran("tab.rename") {
+		t.Errorf("the old key no longer names the tab: %v", h.probes)
+	}
+	if !strings.Contains(res.err, "zellij.display_name") || !strings.Contains(res.err, "deprecated") {
+		t.Errorf("never said zellij.display_name is deprecated:\n%s", res.err)
+	}
+}
+
+func TestStartPrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: new\nzellij:\n  display_name: old\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
+
+	runSbxStart(t, dir, h, "start")
+
+	var name string
+	for _, probe := range h.probes {
+		if len(probe) > 2 && probe[2] == "tab.rename" {
+			name = probe[len(probe)-1]
+		}
+	}
+	if !strings.HasSuffix(name, " new") {
+		t.Errorf("named the tab %q, want it after the top-level display_name: %v", name, h.probes)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/failure"
+	"github.com/neoighodaro/lid/internal/herdr"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
 
@@ -34,6 +35,7 @@ type App struct {
 	Attach func(argv []string, stdin io.Reader, stdout, stderr io.Writer) error
 	Host   backend.Host
 	Zellij zellij.Session
+	Herdr  herdr.Session
 
 	cfgOnce sync.Once
 	cfg     *config.Config
@@ -58,6 +60,7 @@ func New(version, commit, date string) (*App, error) {
 		Err:     os.Stderr,
 		Cwd:     cwd,
 		Zellij:  zellij.New(),
+		Herdr:   herdr.New(),
 	}, nil
 }
 

@@ -104,7 +104,7 @@ func start(cmd *cobra.Command, a *app.App, args []string, opts startOptions) err
 		return err
 	}
 
-	a.Zellij.RenameTab(cfg.Zellij.DisplayName)
+	nameTab(a, cfg)
 
 	provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: opts.rebuild})
 	if err != nil {

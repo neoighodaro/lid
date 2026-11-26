@@ -146,6 +146,10 @@ func projectChecks(cfg *config.Config, b backend.Backend) []check {
 		checks = append(checks, check{name: "agent", detail: cfg.Agent})
 	}
 
+	for _, note := range cfg.Deprecations() {
+		checks = append(checks, check{name: "config", level: checkWarn, detail: note})
+	}
+
 	warnings, err := b.Validate(cfg)
 	if err != nil {
 		return append(checks, failed("project", err))

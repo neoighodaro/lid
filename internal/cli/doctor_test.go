@@ -101,3 +101,15 @@ func TestDoctorReportsARunningSandbox(t *testing.T) {
 		t.Errorf("sandbox line = %q, want running\n%s", line, out)
 	}
 }
+
+func TestDoctorSaysToMoveTheDeprecatedZellijDisplayName(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\nzellij:\n  display_name: api\n")
+
+	out, err := doctor(t, dir, &twoBackendHost{})
+
+	exitedWith(t, err, 0)
+	if !strings.Contains(out, "zellij.display_name") || !strings.Contains(out, "deprecated") {
+		t.Errorf("doctor never mentioned the deprecated zellij.display_name:\n%s", out)
+	}
+}
