@@ -18,6 +18,7 @@ import (
 )
 
 const (
+	nonoQuietBash              = "BASH_SILENCE_DEPRECATION_WARNING=1"
 	nonoBaseProfile            = "default"
 	nonoFallbackNetworkProfile = "developer"
 	nonoMinVersion             = "0.74.0"
@@ -379,7 +380,7 @@ func (nono) ShellArgv(_ Host, cfg *config.Config, profilePath string, command []
 	if err != nil {
 		return nil, err
 	}
-	return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "--rcfile", rc, "-i"), nil
+	return append(nonoShellArgv(cfg, "run", profilePath), "--", "env", nonoQuietBash, "bash", "--rcfile", rc, "-i"), nil
 }
 
 func nonoWriteShellRC(cfg *config.Config, dir string) (string, error) {
@@ -462,7 +463,7 @@ func (nono) PaneArgv(h Host, cfg *config.Config, profilePath, command string) ([
 	}
 	argv := nonoShellArgv(cfg, "run", profilePath)
 	argv[0] = exe
-	return append(argv, "--", "env", PaneCmdVar+"="+command, "bash", "--rcfile", rc, "-i"), nil
+	return append(argv, "--", "env", nonoQuietBash, PaneCmdVar+"="+command, "bash", "--rcfile", rc, "-i"), nil
 }
 
 // nonoShellArgv leaves the audit trail off unless audit: asks for it. Its
