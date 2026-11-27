@@ -147,11 +147,45 @@ func TestSbxWritesNoHandoffSkillWhenHandoffIsOff(t *testing.T) {
 func TestNonoLetsTheSessionReachTheBroker(t *testing.T) {
 	profile := render(t, "name: api\nbackend: nono\nhandoff:\n  enabled: true\n")
 
-	if !strings.Contains(profile, `"localhost"`) {
-		t.Errorf("profile does not allow the broker host:\n%s", profile)
+	if strings.Contains(profile, `"localhost"`) {
+		t.Errorf("profile allows localhost through the proxy, which never carries the broker's traffic:\n%s", profile)
 	}
 	if !strings.Contains(profile, "LID_HANDOFF_URL") || !strings.Contains(profile, "http://localhost:8787") {
 		t.Errorf("profile does not carry the handoff environment:\n%s", profile)
+	}
+}
+
+func TestNonoOpensOnlyTheLocalBrokersPort(t *testing.T) {
+	for body, want := range map[string]string{
+		"name: api\nbackend: nono\nhandoff:\n  enabled: true\n":                                    "--open-port 8787",
+		"name: api\nbackend: nono\nhandoff:\n  enabled: true\n  url: http://127.0.0.1:9000\n":      "--open-port 9000",
+		"name: api\nbackend: nono\nagent: shell\nhandoff:\n  enabled: true\n":                      "--open-port 8787",
+		"name: api\nbackend: nono\n":                                                               "",
+		"name: api\nbackend: nono\nhandoff:\n  enabled: true\n  url: http://broker.example:8787\n": "",
+	} {
+		cfg := cfgFor(t, body)
+		start, err := Get(config.BackendNono).StartArgv(cfg, "/tmp/nono.jsonc", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shell, err := Get(config.BackendNono).ShellArgv((&sbxFake{}).host(), cfg, "/tmp/nono.jsonc", []string{"true"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, argv := range map[string][]string{"agent": start, "shell": shell} {
+			got := strings.Join(argv, " ") + " "
+			if want == "" && strings.Contains(got, "--open-port") || want != "" && !strings.Contains(got, want+" ") {
+				t.Errorf("%s argv for %q = %q, want %q", name, body, got, want)
+			}
+		}
+	}
+}
+
+func TestNonoStillAllowsARemoteBrokersHost(t *testing.T) {
+	profile := render(t, "name: api\nbackend: nono\nhandoff:\n  enabled: true\n  url: http://broker.example:8787\n")
+
+	if !strings.Contains(profile, `"broker.example"`) {
+		t.Errorf("profile does not allow the remote broker:\n%s", profile)
 	}
 }
 

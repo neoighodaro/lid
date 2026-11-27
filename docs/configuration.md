@@ -361,7 +361,7 @@ How it works: for each session, `lid start` listens on a random localhost port b
 
 ### `handoff.enabled`
 
-Both backends. Lets the agent ask agents in other sandboxes questions and answer theirs. Run the broker on your host with `lid handoff -D`. On nono, run `lid handoff --install-skill` once to teach the agent how to use it.
+Both backends. Lets the agent ask agents in other sandboxes questions and answer theirs. Run the broker on your host with `lid handoff -D`. On nono, run `lid handoff --install-skill` once to teach the agent how to use it. On nono, when the broker is on your Mac, lid runs the session with `--open-port` for the broker's port, which lets the agent reach that port and no other localhost port.
 
 ### `handoff.url`
 

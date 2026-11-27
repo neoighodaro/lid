@@ -40,5 +40,6 @@ Install nono from <https://nono.sh>.
 - `lid start --print` shows the nono profile lid generates.
 - Every profile lid generates denies lid's own cache directory, so the agent can't touch lid's session files.
 - With [`herdr.panes`](configuration.md#herdrpanes) on, the agent runs under a private per-session copy of the profile, with `--open-port` for the listener's port only.
+- With [`handoff`](configuration.md#handoffenabled) on and the broker on your Mac, the session gets `--open-port` for the broker's port only.
 
 Run `lid doctor` to check that lid, both backends and the current project are ready.
