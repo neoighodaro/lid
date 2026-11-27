@@ -28,10 +28,9 @@ import (
 )
 
 const (
-	paneTimeout    = 15 * time.Second
-	panesNonoGrant = "localhost"
-	profilePrefix  = "profile-"
-	profileSuffix  = ".jsonc"
+	paneTimeout   = 15 * time.Second
+	profilePrefix = "profile-"
+	profileSuffix = ".jsonc"
 )
 
 const panesPromptText = `You are running in a Herdr terminal. When the user asks you to run something in another pane (or a new/separate pane), open one with:
@@ -277,7 +276,23 @@ func runAgent(cmd *cobra.Command, a *app.App, b backend.Backend, cfg *config.Con
 	if err != nil {
 		return err
 	}
+	if held != nil {
+		argv = session.reach(cfg, argv)
+	}
 	return a.Launch(argv)
+}
+
+// reach opens the listener's port, and no other localhost port, to a nono
+// process. nono's domain allowlist only covers its proxy.
+func (s *paneSession) reach(cfg *config.Config, argv []string) []string {
+	if cfg.Backend != config.BackendNono {
+		return argv
+	}
+	end := slices.Index(argv, "--")
+	if end < 0 {
+		end = len(argv)
+	}
+	return slices.Insert(slices.Clone(argv), end, "--open-port", strconv.Itoa(s.listener.Port()))
 }
 
 func openPane(s *paneSession, b backend.Backend, cfg *config.Config, h herdr.Session, exe, command string) error {
@@ -288,6 +303,7 @@ func openPane(s *paneSession, b backend.Backend, cfg *config.Config, h herdr.Ses
 	if err != nil {
 		return err
 	}
+	argv = s.reach(cfg, argv)
 	path, err := panes.WriteArgv(argv)
 	if err != nil {
 		return err
@@ -299,15 +315,10 @@ func openPane(s *paneSession, b backend.Backend, cfg *config.Config, h herdr.Ses
 	return nil
 }
 
-// writePrivateProfile renders the nono profile with the listener grant into
-// lid's private dir, so neither the agent nor a pane runs under a profile the
-// agent could rewrite, and the project's own profile never carries the grant.
+// writePrivateProfile renders the nono profile into lid's private dir, so
+// neither the agent nor a pane runs under a profile the agent could rewrite.
 func writePrivateProfile(h backend.Host, b backend.Backend, cfg *config.Config) (string, []byte, error) {
-	granted := *cfg
-	if !slices.Contains(granted.Network, panesNonoGrant) {
-		granted.Network = append(slices.Clone(granted.Network), panesNonoGrant)
-	}
-	rendered, err := b.Render(&granted)
+	rendered, err := b.Render(cfg)
 	if err != nil {
 		return "", nil, err
 	}

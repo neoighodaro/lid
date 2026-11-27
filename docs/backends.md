@@ -39,6 +39,6 @@ Install nono from <https://nono.sh>.
 - lid merges the `claude.settings` block into `.claude/settings.local.json` only when that file already exists.
 - `lid start --print` shows the nono profile lid generates.
 - Every profile lid generates denies lid's own cache directory, so the agent can't touch lid's session files.
-- With [`herdr.panes`](configuration.md#herdrpanes) on, the agent runs under a private per-session profile that also allows `localhost`.
+- With [`herdr.panes`](configuration.md#herdrpanes) on, the agent runs under a private per-session copy of the profile, with `--open-port` for the listener's port only.
 
 Run `lid doctor` to check that lid, both backends and the current project are ready.

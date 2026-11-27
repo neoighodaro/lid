@@ -281,13 +281,32 @@ func TestStartGivesTheAgentThePanesEndpoint(t *testing.T) {
 		if filepath.Dir(profile) != panesDir(t) {
 			t.Errorf("the agent runs under %s, not the session's private profile", profile)
 		}
-		if !strings.Contains(body, `"localhost"`) {
-			t.Errorf("the session profile does not let the agent reach the listener:\n%s", body)
+		if got := openPortOf(h.argv); got != e.port {
+			t.Errorf("the agent may reach localhost port %d, want only the listener's %d: %v", got, e.port, h.argv)
+		}
+		if strings.Contains(body, `"localhost"`) {
+			t.Errorf("the session profile opens all of localhost:\n%s", body)
 		}
 		if strings.Contains(read(t, kitProfile(dir)), `"localhost"`) {
 			t.Error("the project's profile carries the panes grant")
 		}
 	})
+}
+
+// openPortOf is the port nono's --open-port grants, or 0. The flag has to come
+// before the "--" that starts the sandboxed command, or nono never sees it.
+func openPortOf(argv []string) int {
+	end := indexOf(argv, "--")
+	if end < 0 {
+		end = len(argv)
+	}
+	for i, arg := range argv[:end] {
+		if arg == "--open-port" && i+1 < end {
+			port, _ := strconv.Atoi(argv[i+1])
+			return port
+		}
+	}
+	return 0
 }
 
 func indexOf(argv []string, want string) int {
@@ -631,8 +650,11 @@ func TestPaneArgvUsesAPrivateProfileCopy(t *testing.T) {
 		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Errorf("private profile: %v %v", info, err)
 		}
-		if got := read(t, private); got != rendered || !strings.Contains(got, `"localhost"`) {
+		if got := read(t, private); got != rendered {
 			t.Errorf("the pane's profile is not the session's:\n%s", got)
+		}
+		if got := openPortOf(stored); got != e.port {
+			t.Errorf("the pane may reach localhost port %d, want the listener's %d: %v", got, e.port, stored)
 		}
 		return nil
 	}
@@ -668,6 +690,9 @@ func TestNonoWithoutPanesGetsNoLoopbackGrant(t *testing.T) {
 			}
 			if strings.Contains(read(t, kitProfile(dir)), `"localhost"`) {
 				t.Error("the profile grants loopback with no listener to reach")
+			}
+			if openPortOf(h.argv) != 0 {
+				t.Errorf("the agent gets a localhost port with no listener: %v", h.argv)
 			}
 		})
 	}
