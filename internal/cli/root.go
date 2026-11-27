@@ -61,6 +61,7 @@ func NewRootCommand(a *app.App) *cobra.Command {
 		newHandoffCommand(a),
 		newUpdateCommand(a),
 		newUpdateCheckCommand(a),
+		newPaneRunCommand(a),
 	)
 
 	return root

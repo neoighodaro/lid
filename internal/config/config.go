@@ -138,6 +138,10 @@ type Zellij struct {
 	DisplayName string `yaml:"display_name"`
 }
 
+type Herdr struct {
+	Panes bool `yaml:"panes"`
+}
+
 type Handoff struct {
 	Enabled bool   `yaml:"enabled"`
 	URL     string `yaml:"url"`
@@ -286,6 +290,7 @@ type Config struct {
 	PHP             PHP               `yaml:"php"`
 	Zellij          Zellij            `yaml:"zellij"`
 	Memory          string            `yaml:"memory"`
+	Herdr           Herdr             `yaml:"herdr"`
 	Handoff         Handoff           `yaml:"handoff"`
 	Bridges         []Bridge          `yaml:"bridges"`
 	MCP             []string          `yaml:"mcp"`
@@ -924,6 +929,7 @@ func withoutStartApplied(data []byte) []byte {
 func strippedJSON(doc map[string]any, fallback []byte) []byte {
 	delete(doc, "memory")
 	delete(doc, "zellij")
+	delete(doc, "herdr")
 	delete(doc, "display_name")
 	delete(doc, "shell")
 	if claude, ok := doc["claude"].(map[string]any); ok {

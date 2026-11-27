@@ -52,6 +52,7 @@ func newStopCommand(a *app.App) *cobra.Command {
 			if err := b.EnsureAvailable(a.SandboxHost()); err != nil {
 				return err
 			}
+			removeLeftoverPaneFiles(a, b, cfg)
 
 			state, err := b.Status(a.SandboxHost(), cfg, backend.StatusOptions{})
 			if err != nil {

@@ -113,3 +113,39 @@ func TestDoctorSaysToMoveTheDeprecatedZellijDisplayName(t *testing.T) {
 		t.Errorf("doctor never mentioned the deprecated zellij.display_name:\n%s", out)
 	}
 }
+
+func herdrProject(t *testing.T, extra string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\n"+extra)
+	return dir
+}
+
+func TestDoctorReportsHerdrPanes(t *testing.T) {
+	t.Run("on outside herdr", func(t *testing.T) {
+		out, _ := doctor(t, herdrProject(t, "herdr:\n  panes: true\n"), &twoBackendHost{})
+		line := lineFor(t, out, "herdr")
+		if !strings.HasPrefix(line, "-") || !strings.Contains(line, "on, but lid is not running in Herdr") {
+			t.Errorf("herdr line = %q", line)
+		}
+	})
+	t.Run("on with another agent", func(t *testing.T) {
+		out, _ := doctor(t, herdrProject(t, "agent: codex\nherdr:\n  panes: true\n"), &twoBackendHost{herdrID: "t1"})
+		line := lineFor(t, out, "herdr")
+		if !strings.HasPrefix(line, "!") || !strings.Contains(line, "codex") {
+			t.Errorf("herdr line = %q", line)
+		}
+	})
+	t.Run("on and ready", func(t *testing.T) {
+		out, _ := doctor(t, herdrProject(t, "herdr:\n  panes: true\n"), &twoBackendHost{herdrID: "t1"})
+		if line := lineFor(t, out, "herdr"); !strings.HasPrefix(line, "✓") {
+			t.Errorf("herdr line = %q", line)
+		}
+	})
+	t.Run("off", func(t *testing.T) {
+		out, _ := doctor(t, herdrProject(t, ""), &twoBackendHost{herdrID: "t1"})
+		if strings.Contains(out, "herdr") {
+			t.Errorf("unexpected herdr row in:\n%s", out)
+		}
+	})
+}

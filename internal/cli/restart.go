@@ -64,19 +64,7 @@ func newRestartCommand(a *app.App) *cobra.Command {
 
 			nameTab(a, cfg)
 
-			provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: true})
-			if err != nil {
-				return err
-			}
-			if err := rememberIfNamed(cfg); err != nil {
-				return err
-			}
-
-			argv, err := b.StartArgv(cfg, provisioned.Path, nil)
-			if err != nil {
-				return err
-			}
-			return a.Launch(argv)
+			return runAgent(cmd, a, b, cfg, backend.Options{Rebuild: true}, nil)
 		},
 	}
 

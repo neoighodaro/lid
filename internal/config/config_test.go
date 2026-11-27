@@ -1483,3 +1483,20 @@ func TestExtraWorkspacesRejectedOnNono(t *testing.T) {
 		t.Errorf("error = %v, want it to name extra_workspaces", err)
 	}
 }
+
+func TestHerdrPanesParse(t *testing.T) {
+	if loadBody(t, "name: x\n").Herdr.Panes {
+		t.Error("herdr.panes defaults to true")
+	}
+	if !loadBody(t, "name: x\nherdr:\n  panes: true\n").Herdr.Panes {
+		t.Error("herdr.panes not parsed")
+	}
+}
+
+func TestHerdrDoesNotMakeTheSandboxStale(t *testing.T) {
+	without := hashFor(t, "name: x\nbackend: sbx\n", "")
+	with := hashFor(t, "name: x\nbackend: sbx\nherdr:\n  panes: true\n", "")
+	if without != with {
+		t.Error("the herdr block changed the file hash")
+	}
+}

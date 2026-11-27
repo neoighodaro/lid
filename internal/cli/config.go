@@ -89,6 +89,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"paths.deny", strings.Join(cfg.Paths.Deny, ", ")},
 		{"scripts.on_create", strings.Join(cfg.Scripts.OnCreate, ", ")},
 		{"scripts.on_start", strings.Join(cfg.Scripts.OnStart, ", ")},
+		{"herdr.panes", boolRow(cfg.Herdr.Panes)},
 		{"handoff", handoffRow(cfg)},
 		{"bridges", joinBridges(cfg.Bridges)},
 		{"mcp", strings.Join(cfg.MCP, ", ")},

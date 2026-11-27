@@ -291,11 +291,32 @@ func (sbx) ShellArgv(h Host, cfg *config.Config, _ string, command []string) ([]
 		return []string{"sbx", "exec", "-i", "-w", dir, cfg.Name, "--", "bash", "-lc", shellCommandLine(command)}, nil
 	}
 
-	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
-		return nil, failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
-			WithFix(sbxExecFix)
+	if err := sbxWriteShellRC(h, cfg); err != nil {
+		return nil, err
 	}
 	return []string{"sbx", "exec", "-it", "-w", dir, cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
+}
+
+func sbxWriteShellRC(h Host, cfg *config.Config) error {
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
+		return failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix(sbxExecFix)
+	}
+	return nil
+}
+
+// PaneArgv is the interactive shell with the command handed over in the
+// environment, so it stays one argv element all the way to the shell's rc file.
+func (sbx) PaneArgv(h Host, cfg *config.Config, _ string, command string) ([]string, error) {
+	exe, err := h.lookPath("sbx")
+	if err != nil {
+		return nil, failure.New("cannot find sbx on PATH: %v", err)
+	}
+	if err := sbxWriteShellRC(h, cfg); err != nil {
+		return nil, err
+	}
+	return []string{exe, "exec", "-it", "-w", shellDir(cfg, sbxProjectDir(cfg)), cfg.Name, "--",
+		"env", PaneCmdVar + "=" + command, "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
 }
 
 // sbxProjectDir is where the project sits inside the sandbox: the workspace when

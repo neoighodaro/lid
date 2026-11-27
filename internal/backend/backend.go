@@ -26,6 +26,10 @@ type Backend interface {
 	// interactive session needs its init file materialized first, and only the
 	// backend knows whether that lands on this machine or inside a container.
 	ShellArgv(h Host, cfg *config.Config, profilePath string, command []string) ([]string, error)
+	// PaneArgv is the command that opens an interactive shell in the sandbox
+	// which runs command first and then stays open. The first element is an
+	// absolute path, and command is a single element of the argv.
+	PaneArgv(h Host, cfg *config.Config, profilePath, command string) ([]string, error)
 	Status(h Host, cfg *config.Config, opts StatusOptions) (State, error)
 	Stop(h Host, cfg *config.Config) error
 	// Network changes the firewall of a sandbox that is already up. A backend

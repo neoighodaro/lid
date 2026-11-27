@@ -70,7 +70,7 @@ func TestTheUpdateCheckStaysOutOfSandboxesPipesAndItsOwnCommands(t *testing.T) {
 	if !Suppressed(none, false, "start") {
 		t.Error("lid piped into another command still prints an update notice, which corrupts what it writes")
 	}
-	for _, command := range []string{"update", CheckCommand, "version"} {
+	for _, command := range []string{"update", CheckCommand, "version", "pane-run"} {
 		if !Suppressed(none, true, command) {
 			t.Errorf("'lid %s' triggers its own background update check", command)
 		}

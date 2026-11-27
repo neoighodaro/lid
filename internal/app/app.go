@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
@@ -114,6 +117,8 @@ func (e *ExitError) Error() string {
 	return fmt.Sprintf("exit status %d", e.Code)
 }
 
+var killGrace = 10 * time.Second
+
 func (a *App) Launch(argv []string) error {
 	if a.Attach != nil {
 		return a.Attach(argv, a.In, a.Out, a.Err)
@@ -124,10 +129,42 @@ func (a *App) Launch(argv []string) error {
 	cmd.Stdout = a.Out
 	cmd.Stderr = a.Err
 
-	err := cmd.Run()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		return &ExitError{Code: exit.ExitCode()}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(signals)
+
+	if err := cmd.Start(); err != nil {
+		return err
 	}
-	return err
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	var kill <-chan time.Time
+	for {
+		select {
+		case sig := <-signals:
+			if sig == syscall.SIGINT {
+				continue
+			}
+			cmd.Process.Signal(sig)
+			if kill == nil {
+				kill = time.After(killGrace)
+			}
+		case <-kill:
+			cmd.Process.Kill()
+		case err := <-done:
+			return exitError(err)
+		}
+	}
+}
+
+func exitError(err error) error {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return err
+	}
+	if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return &ExitError{Code: 128 + int(status.Signal())}
+	}
+	return &ExitError{Code: exit.ExitCode()}
 }

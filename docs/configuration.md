@@ -334,6 +334,26 @@ mcp:
   - my-server
 ```
 
+## Herdr panes
+
+### `herdr.panes`
+
+Both backends. Off by default. Lets the agent open a new Herdr pane beside it that runs a command inside the same sandbox, in the project directory. Ask it to "run the dev server in another pane" and the pane appears. You can type into it, stop it with Ctrl-C and rerun the command. When the command exits, the pane stays open as a sandbox shell.
+
+```yaml
+herdr:
+  panes: true
+```
+
+It only takes effect when lid runs inside Herdr and the agent is `claude-code`. Otherwise lid notes why and starts the agent as usual. `lid doctor` shows whether it is on and whether lid is in Herdr.
+
+How it works: for each session, `lid start` listens on a random localhost port behind a random token and tells the agent the address through its system prompt. The agent can only ask for a pane running a command. It can't read the pane's output, type into it or close it. To see the output, the agent writes it to a file with `tee`. lid builds the pane from the config it loaded at start, so editing `lid.yaml` mid-session doesn't change what a pane runs.
+
+- On sbx, lid adds a `localhost:<port>` network rule for the sandbox while the session runs and removes it when the session ends. If lid is killed, the next `lid start` or `lid stop` removes the leftover rule.
+- On nono, the session runs under a private profile that also allows `localhost`, so the agent can reach any service listening on your host's loopback while panes are on. lid also refuses to open panes when `sbx`, `nono`, `herdr-app` or `lid` itself lives inside the project. Don't give the agent write access through `paths.allow` to a directory that holds one of them, such as `~/.local/bin`. It could replace the program, and lid would then run that program on your host.
+- Panes start with Herdr's environment, not the one `lid start` ran with.
+- The token is passed on the agent's command line. On a Mac shared with other users, they can read it with `ps`.
+
 ## Handoff
 
 ### `handoff.enabled`

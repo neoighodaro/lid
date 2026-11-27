@@ -40,7 +40,7 @@ func Suppressed(getenv func(string) string, tty bool, command string) bool {
 		return true
 	}
 	switch command {
-	case "update", CheckCommand, "version", "help":
+	case "update", CheckCommand, "version", "help", "pane-run":
 		return true
 	}
 	return false

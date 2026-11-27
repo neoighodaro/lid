@@ -11,6 +11,7 @@ import (
 	"github.com/neoighodaro/lid/internal/app"
 	"github.com/neoighodaro/lid/internal/backend"
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/herdr"
 )
 
 const (
@@ -29,6 +30,7 @@ type twoBackendHost struct {
 	probes   [][]string
 	execs    [][]string
 	argv     []string
+	herdrID  string
 }
 
 func (h *twoBackendHost) lookPath(name string) (string, error) {
@@ -103,6 +105,7 @@ func runTwo(t *testing.T, cwd string, h *twoBackendHost, args ...string) (result
 		Cwd:     cwd,
 		Host:    backend.Host{LookPath: h.lookPath, Output: h.output, Exec: h.exec},
 		Attach:  h.attach,
+		Herdr:   herdr.Session{TerminalID: h.herdrID},
 	}
 	root := NewRootCommand(a)
 	root.SetArgs(args)

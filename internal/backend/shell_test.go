@@ -3,6 +3,7 @@ package backend
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -266,5 +267,142 @@ func TestNonoShellRunsACommandInTheProject(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "-- bash -lc cd "+shellQuote(cfg.ProjectDir)+" && go test ./...") {
 		t.Errorf("argv = %q, want it to run the command in the project", got)
+	}
+}
+
+const paneCmd = `npm run dev; echo "$HOME"`
+
+func TestShellRCRunsThePaneCommand(t *testing.T) {
+	rc := shellRC(sbxCfg(t, "name: api\n"), "/work")
+
+	want := "if [ -n \"${LID_PANE_CMD:-}\" ]; then\n" +
+		"  __lid_pane_cmd=$LID_PANE_CMD\n" +
+		"  unset LID_PANE_CMD\n" +
+		"  history -s \"$__lid_pane_cmd\"\n" +
+		"  eval \"$__lid_pane_cmd\"\n" +
+		"fi\n"
+	if !strings.HasSuffix(rc, want) {
+		t.Errorf("rc does not end with the pane trailer:\n%s", rc)
+	}
+}
+
+func TestSbxPaneArgvHasATTY(t *testing.T) {
+	f := &sbxFake{sandboxes: []string{"api"}, hash: "written"}
+	cfg := sbxCfg(t, "name: api\n")
+
+	argv, err := Get("sbx").PaneArgv(f.host(), cfg, "", paneCmd)
+	if err != nil {
+		t.Fatalf("PaneArgv: %v", err)
+	}
+
+	want := []string{"/usr/local/bin/sbx", "exec", "-it", "-w", cfg.ProjectDir, "api", "--", "env", "LID_PANE_CMD=" + paneCmd, "bash", "--rcfile", "/home/agent/.lid-shellrc", "-i"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Errorf("argv = %q, want %q", argv, want)
+	}
+	if !f.ran("sbx exec", "api", "LID_PANE_CMD") {
+		t.Errorf("the rc was never written into the sandbox: %v", f.calls)
+	}
+}
+
+func TestNonoPaneArgvCarriesTheGivenProfile(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nbackend: nono\n")
+	f := &nonoFake{}
+
+	argv, err := Get("nono").PaneArgv(f.host(), cfg, "/priv/lid.jsonc", paneCmd)
+	if err != nil {
+		t.Fatalf("PaneArgv: %v", err)
+	}
+
+	rc := filepath.Join(cfg.KitDir(), "shellrc")
+	want := []string{"/usr/local/bin/nono", "run", "--profile", "/priv/lid.jsonc", "--name", "lid", "--workdir", cfg.ProjectDir, "--allow-cwd", "--no-audit", "--", "env", "LID_PANE_CMD=" + paneCmd, "bash", "--rcfile", rc, "-i"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Errorf("argv = %q, want %q", argv, want)
+	}
+	if _, err := os.Stat(rc); err != nil {
+		t.Errorf("rc not written: %v", err)
+	}
+}
+
+func TestNonoShellRCReplacesASymlinkInsteadOfFollowingIt(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nbackend: nono\n")
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(cfg.KitDir(), "shellrc")
+	if err := os.MkdirAll(cfg.KitDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, rc); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Get("nono").PaneArgv(Host{LookPath: func(n string) (string, error) { return "/bin/" + n, nil }}, cfg, "/p", "x"); err != nil {
+		t.Fatalf("PaneArgv: %v", err)
+	}
+
+	if got, _ := os.ReadFile(victim); string(got) != "keep" {
+		t.Errorf("the symlink target was overwritten: %q", got)
+	}
+	if info, err := os.Lstat(rc); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("shellrc is not a regular file afterwards: %v %v", info, err)
+	}
+}
+
+func TestNonoShellRCRefusesASymlinkedKitDir(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nbackend: nono\n")
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(cfg.KitDir()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, cfg.KitDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Get("nono").PaneArgv(Host{LookPath: func(n string) (string, error) { return "/bin/" + n, nil }}, cfg, "/p", "x")
+
+	if err == nil {
+		t.Error("PaneArgv wrote through a symlinked kit dir")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the symlink target was written to: %v", entries)
+	}
+}
+
+func TestNonoShellRCRefusesASymlinkedConfigDir(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nbackend: nono\n")
+	target := t.TempDir()
+	cfgDir := filepath.Dir(filepath.Dir(cfg.KitDir()))
+	if err := os.MkdirAll(filepath.Dir(cfgDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, cfgDir); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Get("nono").PaneArgv(Host{LookPath: func(n string) (string, error) { return "/bin/" + n, nil }}, cfg, "/p", "x")
+
+	if err == nil {
+		t.Error("PaneArgv wrote through a symlinked directory")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the symlink target was written to: %v", entries)
+	}
+}
+
+func TestNonoShellRCIsWrittenWhenTheProjectDirIsASymlink(t *testing.T) {
+	cfg := cfgFor(t, "name: lid\nbackend: nono\n")
+	link := filepath.Join(t.TempDir(), "proj")
+	if err := os.Symlink(cfg.ProjectDir, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ProjectDir = link
+
+	if _, err := Get("nono").PaneArgv(Host{LookPath: func(n string) (string, error) { return "/bin/" + n, nil }}, cfg, "/p", "x"); err != nil {
+		t.Fatalf("PaneArgv: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfg.KitDir(), "shellrc")); err != nil {
+		t.Errorf("rc not written through the linked project dir: %v", err)
 	}
 }

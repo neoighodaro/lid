@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/handoff"
 	"github.com/neoighodaro/lid/internal/herdr"
+	"github.com/neoighodaro/lid/internal/panes"
 	"github.com/neoighodaro/lid/internal/update"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
@@ -1101,12 +1104,27 @@ type sbxStartHost struct {
 	stdin    io.Reader
 	probes   [][]string
 	argv     []string
+
+	mu       sync.Mutex
+	onAttach func(argv []string) error
+	onExec   func(argv []string)
+	splits   [][]string
+	splitErr error
+	noAttach bool
+	bins     map[string]string
+	badNono  bool
+}
+
+func (h *sbxStartHost) record(argv []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.probes = append(h.probes, argv)
 }
 
 // zellij answers as a session whose focused pane is terminal_7, on a tab that
 // has never been renamed.
 func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
 	switch {
 	case strings.Contains(strings.Join(argv, " "), "list-clients"):
 		return []byte("CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_7 lid\n"), nil
@@ -1119,21 +1137,40 @@ func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
 // herdr answers as a Herdr window with terminal t7 in tab tb1, a tab that has
 // never been renamed.
 func (h *sbxStartHost) herdr(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
-	if strings.Join(argv, " ") == "herdr-app ls" {
-		return []byte(`{"spaces": [{"id": "sp1", "tabs": [{"id": "tb1", "name": "1", "terminals": [{"terminal": "t7"}]}]}]}`), nil
+	h.record(argv)
+	if len(argv) == 2 && filepath.Base(argv[0]) == "herdr-app" && argv[1] == "ls" {
+		return []byte(`{"spaces": [{"id": "sp1", "tabs": [{"id": "tb1", "name": "1", "terminals": [{"terminal": "t7", "pane": "p7"}]}]}]}`), nil
+	}
+	if len(argv) == 4 && argv[2] == "pane.split" {
+		h.mu.Lock()
+		h.splits = append(h.splits, argv)
+		h.mu.Unlock()
+		if h.splitErr != nil {
+			return nil, h.splitErr
+		}
+		return []byte(`{"pane": "p8"}`), nil
 	}
 	return nil, nil
 }
 
 func (h *sbxStartHost) lookPath(name string) (string, error) {
-	return "/usr/local/bin/" + name, nil
+	h.mu.Lock()
+	path, ok := h.bins[name]
+	h.mu.Unlock()
+	if ok {
+		return path, nil
+	}
+	return fakeBinary(name)
 }
 
 func (h *sbxStartHost) output(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
 	line := strings.Join(argv, " ")
 	switch {
+	case h.badNono && strings.Contains(line, "nono profile validate") && strings.Contains(line, "/lid/panes/"):
+		return []byte("error: unknown domain localhost\n"), errors.New("exit status 1")
+	case line == "nono --version":
+		return []byte("nono 0.74.0\n"), nil
 	case line == "sbx version":
 		return []byte("sbx version v0.54.0 4bec4a5\n"), nil
 	case strings.Contains(line, "sbx ls --json"):
@@ -1152,16 +1189,24 @@ func (h *sbxStartHost) output(argv []string) ([]byte, error) {
 }
 
 func (h *sbxStartHost) exec(argv []string, _, _ io.Writer) error {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
+	if h.onExec != nil {
+		h.onExec(argv)
+	}
 	return nil
 }
 
 func (h *sbxStartHost) attach(argv []string, _ io.Reader, _, _ io.Writer) error {
 	h.argv = argv
+	if h.onAttach != nil {
+		return h.onAttach(argv)
+	}
 	return nil
 }
 
 func (h *sbxStartHost) ran(fragment string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, probe := range h.probes {
 		if strings.Contains(strings.Join(probe, " "), fragment) {
 			return true
@@ -1171,6 +1216,15 @@ func (h *sbxStartHost) ran(fragment string) bool {
 }
 
 func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) result {
+	t.Helper()
+	res, err := runSbxStartErr(t, cwd, h, args...)
+	if err != nil {
+		t.Fatalf("%v: %v\nstderr: %s", args, err, res.err)
+	}
+	return res
+}
+
+func runSbxStartErr(t *testing.T, cwd string, h *sbxStartHost, args ...string) (result, error) {
 	t.Helper()
 	var out, errBuf bytes.Buffer
 	var stdin io.Reader = strings.NewReader("")
@@ -1189,12 +1243,13 @@ func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) resu
 		Zellij:  zellij.Session{PaneID: h.paneID, Run: h.zellij},
 		Herdr:   herdr.Session{TerminalID: h.herdrID, Run: h.herdr},
 	}
+	if h.noAttach {
+		a.Attach = nil
+	}
 	root := NewRootCommand(a)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		t.Fatalf("%v: %v\nstderr: %s", args, err, errBuf.String())
-	}
-	return result{out: out.String(), err: errBuf.String()}
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
 }
 
 func TestStartKeepsTheRunningSandboxWhenTheConfigHasChanged(t *testing.T) {
@@ -2247,4 +2302,42 @@ func hasGrantRow(out, label, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestPaneRunIgnoresTheProjectConfig(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache)
+
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\nscripts:\n  on_start: touch pwned\n  bogus: [\n")
+	want := []string{"sbx", "run", "--name", "api"}
+	file, err := panes.WriteArgv(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &twoBackendHost{}
+
+	if got, err := runTwo(t, dir, h, "pane-run", file); err != nil {
+		t.Fatalf("pane-run: %v\n%s", err, got.err)
+	}
+	if !reflect.DeepEqual(h.argv, want) {
+		t.Errorf("launched %v, want %v", h.argv, want)
+	}
+	if len(h.execs) > 0 || len(h.probes) > 0 {
+		t.Errorf("did other work: execs %v, probes %v", h.execs, h.probes)
+	}
+	if _, err := os.Stat(file); err == nil {
+		t.Error("pane file was not consumed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Error("on_start ran")
+	}
+}
+
+func TestPaneRunIsHidden(t *testing.T) {
+	got, _ := run(t, t.TempDir(), "--help")
+	if strings.Contains(got.out, "pane-run") {
+		t.Errorf("pane-run is listed in help:\n%s", got.out)
+	}
 }

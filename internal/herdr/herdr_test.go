@@ -1,7 +1,10 @@
 package herdr
 
 import (
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +148,120 @@ func TestRenameTabIgnoresALayoutItCannotParse(t *testing.T) {
 
 	if id, _, ok := f.renamed(); ok {
 		t.Errorf("renamed tab %q from output it did not understand", id)
+	}
+}
+
+func (f *fakeHerdr) splitSession(terminalID, reply string) Session {
+	s := f.session(terminalID)
+	inner := s.Run
+	s.Run = func(argv []string) ([]byte, error) {
+		if len(argv) >= 3 && argv[2] == "pane.split" {
+			f.calls = append(f.calls, argv)
+			return []byte(reply), nil
+		}
+		return inner(argv)
+	}
+	return s
+}
+
+func (f *fakeHerdr) split() []string {
+	for _, call := range f.calls {
+		if len(call) >= 3 && call[2] == "pane.split" {
+			return call
+		}
+	}
+	return nil
+}
+
+func TestSplitPaneTargetsLidsTerminal(t *testing.T) {
+	f := &fakeHerdr{ls: lsReply("shell")}
+	argv := []string{"/bin/lid", "pane-run", "/x; $(id)"}
+
+	if err := f.splitSession("t3", `{"pane":"p9","terminal":"t9"}`).SplitPane(argv); err != nil {
+		t.Fatalf("SplitPane: %v", err)
+	}
+
+	call := f.split()
+	if len(call) != 4 {
+		t.Fatalf("split call = %q", call)
+	}
+	var got struct {
+		Direction string   `json:"direction"`
+		Pane      string   `json:"pane"`
+		Argv      []string `json:"argv"`
+	}
+	if err := json.Unmarshal([]byte(call[3]), &got); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if got.Direction != "right" || got.Pane != "p3" || !reflect.DeepEqual(got.Argv, argv) {
+		t.Errorf("payload = %+v", got)
+	}
+}
+
+func TestSplitPaneFindsLidsTerminalAmongSubAgents(t *testing.T) {
+	f := &fakeHerdr{ls: `{"spaces":[{"tabs":[{"id":"tb1","name":"x","terminals":[
+	  {"terminal":"t1","pane":"p1","sub_agents":[{"terminal":"t7","pane":"p7","sub_agents":[]}]}]}]}]}`}
+
+	if err := f.splitSession("t7", `{"pane":"p9","terminal":"t9"}`).SplitPane([]string{"a"}); err != nil {
+		t.Fatalf("SplitPane: %v", err)
+	}
+	if !strings.Contains(f.split()[3], `"pane":"p7"`) {
+		t.Errorf("split = %q, want pane p7", f.split())
+	}
+}
+
+func TestSplitPaneOutsideHerdrErrors(t *testing.T) {
+	f := &fakeHerdr{ls: lsReply("shell")}
+
+	if err := f.splitSession("", `{"pane":"p9"}`).SplitPane([]string{"a"}); err == nil {
+		t.Error("SplitPane outside Herdr returned nil")
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("ran %v outside Herdr", f.calls)
+	}
+}
+
+func TestSplitPaneErrorsWhenLidsPaneIsUnknown(t *testing.T) {
+	for name, ls := range map[string]string{
+		"not found":  lsReply("shell"),
+		"empty pane": `{"spaces":[{"tabs":[{"id":"tb1","terminals":[{"terminal":"t3","pane":""}]}]}]}`,
+	} {
+		f := &fakeHerdr{ls: ls}
+		id := "t404"
+		if name == "empty pane" {
+			id = "t3"
+		}
+		if err := f.splitSession(id, `{"pane":"p9"}`).SplitPane([]string{"a"}); err == nil {
+			t.Errorf("%s: SplitPane returned nil", name)
+		}
+		if f.split() != nil {
+			t.Errorf("%s: pane.split ran: %q", name, f.split())
+		}
+	}
+}
+
+func TestSplitPaneErrorsWhenHerdrOpensNoPane(t *testing.T) {
+	f := &fakeHerdr{ls: lsReply("shell")}
+
+	if err := f.splitSession("t3", `{"pane":"","terminal":""}`).SplitPane([]string{"a"}); err == nil {
+		t.Error("SplitPane accepted a reply with no pane")
+	}
+}
+
+func TestSplitPaneRunsTheHerdrAppItWasGiven(t *testing.T) {
+	f := &fakeHerdr{ls: lsReply("shell")}
+	s := f.splitSession("t3", `{"pane":"p9","terminal":"t9"}`)
+	s.Bin = "/opt/herdr/bin/herdr-app"
+
+	if err := s.SplitPane([]string{"a"}); err != nil {
+		t.Fatalf("SplitPane: %v", err)
+	}
+	for _, call := range f.calls {
+		if call[0] != s.Bin {
+			t.Errorf("ran %q, want %s, not herdr-app from PATH", call, s.Bin)
+		}
+	}
+	if len(f.calls) != 2 {
+		t.Errorf("calls = %q, want ls then pane.split", f.calls)
 	}
 }

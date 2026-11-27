@@ -156,6 +156,11 @@ claude:
 # Name for the terminal tab lid starts in, inside zellij or Herdr.
 # display_name: my-project
 
+# Let the agent open Herdr panes that run a command in this sandbox.
+# Only takes effect inside Herdr, with the claude-code agent.
+# herdr:
+#   panes: true
+
 # Instructions injected into the agent's memory file.
 # memory: |
 #   Project-specific instructions here.
