@@ -1180,3 +1180,33 @@ func TestAHandoffSkillThatCannotBeWrittenLeavesTheHostAlone(t *testing.T) {
 		t.Errorf("the agent's memory was not written:\n%s", f.lines())
 	}
 }
+
+func TestSbxCreateSizesTheSandbox(t *testing.T) {
+	cfg := sbxCfg(t, "name: api\nresources:\n  cpus: 4\n  memory: 8G\n")
+
+	argv := strings.Join(sbxCreateArgv(cfg), " ")
+	if !strings.Contains(argv, "--cpus 4 --memory 8g ") {
+		t.Errorf("argv = %s, want --cpus 4 --memory 8g", argv)
+	}
+}
+
+func TestSbxCreateLeavesSizingToSbxByDefault(t *testing.T) {
+	argv := strings.Join(sbxCreateArgv(sbxCfg(t, "name: api\n")), " ")
+	if strings.Contains(argv, "--cpus") || strings.Contains(argv, "--memory") {
+		t.Errorf("argv = %s, want no sizing flags", argv)
+	}
+}
+
+func TestSbxCreateMountsExtraWorkspacesAfterTheProject(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	cfg := sbxCfg(t, "name: api\nextra_workspaces:\n  - ~/docs:ro\n  - /data:/workspace/data\n")
+
+	argv := sbxCreateArgv(cfg)
+	want := []string{cfg.ProjectDir, filepath.Join(home, "docs") + ":ro", "/data:/workspace/data"}
+	if got := argv[len(argv)-3:]; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("argv tail = %v, want %v", got, want)
+	}
+}

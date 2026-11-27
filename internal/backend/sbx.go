@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/config"
@@ -434,9 +435,23 @@ func sbxCreateArgv(cfg *config.Config) []string {
 		argv = append(argv, "-p", string(port))
 	}
 
+	if cfg.Resources.CPUs > 0 {
+		argv = append(argv, "--cpus", strconv.Itoa(cfg.Resources.CPUs))
+	}
+	if cfg.Resources.Memory != "" {
+		argv = append(argv, "--memory", strings.ToLower(cfg.Resources.Memory))
+	}
+
 	argv = append(argv, "--static-mcp", sbxStaticMCP(cfg))
 
-	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+	argv = append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+	home, _ := os.UserHomeDir()
+	for _, entry := range cfg.ExtraWorkspaces {
+		if w, err := config.ParseExtraWorkspace(entry); err == nil {
+			argv = append(argv, w.Arg(home))
+		}
+	}
+	return argv
 }
 
 func sbxStaticMCP(cfg *config.Config) string {

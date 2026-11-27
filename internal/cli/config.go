@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/app"
@@ -69,6 +70,9 @@ func configRows(cfg *config.Config) [][2]string {
 		{"template", cfg.Template},
 		{"workspace", cfg.Workspace},
 		{"clone", boolRow(cfg.Clone)},
+		{"resources.cpus", cpusRow(cfg.Resources.CPUs)},
+		{"resources.memory", cfg.Resources.Memory},
+		{"extra_workspaces", strings.Join(cfg.ExtraWorkspaces, ", ")},
 		{"packages", strings.Join(cfg.Packages, ", ")},
 		{"runtimes", joinRuntimes(cfg.Runtimes)},
 		{"php.extensions", strings.Join(cfg.PHP.Extensions, ", ")},
@@ -104,6 +108,13 @@ func configRows(cfg *config.Config) [][2]string {
 		}
 	}
 	return rows
+}
+
+func cpusRow(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 // boolRow renders a flag the way every other row reads: the empty string means

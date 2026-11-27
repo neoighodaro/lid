@@ -1428,3 +1428,58 @@ func TestTabNamePrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
 		t.Errorf("Deprecations() = %v, want the leftover zellij.display_name flagged", got)
 	}
 }
+
+func TestResourcesParse(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nresources:\n  cpus: 4\n  memory: 8g\n")
+	if cfg.Resources.CPUs != 4 || cfg.Resources.Memory != "8g" {
+		t.Errorf("resources = %+v, want 4 CPUs and 8g", cfg.Resources)
+	}
+}
+
+func TestResourcesRejectsBadValues(t *testing.T) {
+	for body, want := range map[string]string{
+		"resources:\n  cpus: -1\n":               "resources.cpus",
+		"resources:\n  memory: 8\n":              "not a memory size",
+		"resources:\n  memory: 8gb\n":            "not a memory size",
+		"resources:\n  memory: 256m\n":           "below 512m",
+		"backend: nono\nresources:\n  cpus: 2\n": "resources",
+	} {
+		err := loadBodyErr(t, "name: lid\n"+body)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: error = %v, want it to mention %q", body, err, want)
+		}
+	}
+}
+
+func TestParseExtraWorkspace(t *testing.T) {
+	for entry, want := range map[string]ExtraWorkspace{
+		"/data":                    {Host: "/data"},
+		"/data:ro":                 {Host: "/data", ReadOnly: true},
+		"~/docs:/workspace/docs":   {Host: "~/docs", Sandbox: "/workspace/docs"},
+		"/data:/workspace/data:ro": {Host: "/data", Sandbox: "/workspace/data", ReadOnly: true},
+	} {
+		got, err := ParseExtraWorkspace(entry)
+		if err != nil || got != want {
+			t.Errorf("ParseExtraWorkspace(%q) = %+v, %v; want %+v", entry, got, err, want)
+		}
+	}
+	for _, entry := range []string{"", "docs", "/data:rw", "/data:workspace", "/a:/b:/c"} {
+		if _, err := ParseExtraWorkspace(entry); err == nil {
+			t.Errorf("ParseExtraWorkspace(%q) succeeded, want an error", entry)
+		}
+	}
+}
+
+func TestExtraWorkspaceArgExpandsHome(t *testing.T) {
+	w := ExtraWorkspace{Host: "~/docs", Sandbox: "/workspace/docs", ReadOnly: true}
+	if got := w.Arg("/Users/neo"); got != "/Users/neo/docs:/workspace/docs:ro" {
+		t.Errorf("Arg = %q", got)
+	}
+}
+
+func TestExtraWorkspacesRejectedOnNono(t *testing.T) {
+	err := loadBodyErr(t, "name: lid\nbackend: nono\nextra_workspaces:\n  - /data\n")
+	if err == nil || !strings.Contains(err.Error(), "extra_workspaces") {
+		t.Errorf("error = %v, want it to name extra_workspaces", err)
+	}
+}
