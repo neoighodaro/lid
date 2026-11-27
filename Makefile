@@ -6,7 +6,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DA
 DIST    := dist
 INSTALL_DIR ?= $(HOME)/Developer/bin
 
-.PHONY: build install release mac mac-arm64 mac-amd64 assets test vet fmt check clean
+.PHONY: build install release mac mac-arm64 mac-amd64 assets test docs vet fmt check clean
 
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
@@ -69,6 +69,10 @@ assets: $(DIST)
 
 test:
 	go test ./...
+
+# Regenerates docs/commands.md from the command tree.
+docs:
+	LID_UPDATE_DOCS=1 go test ./internal/cli -run TestCommandDocsAreCurrent
 
 vet:
 	go vet ./...

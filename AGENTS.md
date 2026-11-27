@@ -4,6 +4,15 @@
 - Don't litter code with comments
 - Plans, SDD, Specs must only exist inside `.claude/docs` not `.superpowers`, `docs`, `plans`, etc. and not committed
 
+# Documentation
+- `README.md` and `docs/` are user-facing documentation and ARE committed. They are not plans or specs
+- Every change that affects users updates the docs for the areas it touches, in the same change:
+  - A new or changed config key: `docs/configuration.md` (what it does, which backends support it, an example), and the starter YAMLs in `internal/config/`
+  - A new or changed command or flag: run `make docs` to regenerate `docs/commands.md`. Never edit that file by hand
+  - A change to what a backend can do: `docs/backends.md`
+  - A change to install or first-run steps: `README.md`
+- `go test ./...` fails when a config key is missing from `docs/configuration.md` or `docs/commands.md` is out of date, but it can't tell whether the prose is still accurate. Reread the sections you touched
+
 # Sandbox
 - You might be running inside a sandbox where some commands (e.g. `zellij`, host-only tools) are unavailable or behave differently
 - Check with the `IS_SANDBOX` env var: if `IS_SANDBOX=1` you are sandboxed
