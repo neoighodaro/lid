@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 )
 
 const (
+	nonoQuietBash              = "BASH_SILENCE_DEPRECATION_WARNING=1"
 	nonoBaseProfile            = "default"
 	nonoFallbackNetworkProfile = "developer"
 	nonoMinVersion             = "0.74.0"
@@ -378,7 +380,7 @@ func (nono) ShellArgv(_ Host, cfg *config.Config, profilePath string, command []
 	if err != nil {
 		return nil, err
 	}
-	return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "--rcfile", rc, "-i"), nil
+	return append(nonoShellArgv(cfg, "run", profilePath), "--", "env", nonoQuietBash, "bash", "--rcfile", rc, "-i"), nil
 }
 
 func nonoWriteShellRC(cfg *config.Config, dir string) (string, error) {
@@ -461,7 +463,7 @@ func (nono) PaneArgv(h Host, cfg *config.Config, profilePath, command string) ([
 	}
 	argv := nonoShellArgv(cfg, "run", profilePath)
 	argv[0] = exe
-	return append(argv, "--", "env", PaneCmdVar+"="+command, "bash", "--rcfile", rc, "-i"), nil
+	return append(argv, "--", "env", nonoQuietBash, PaneCmdVar+"="+command, "bash", "--rcfile", rc, "-i"), nil
 }
 
 // nonoShellArgv leaves the audit trail off unless audit: asks for it. Its
@@ -471,6 +473,9 @@ func nonoShellArgv(cfg *config.Config, verb, profilePath string) []string {
 	argv := []string{"nono", verb, "--profile", profilePath, "--name", cfg.Name, "--workdir", cfg.ProjectDir, "--allow-cwd"}
 	if verb == "run" && !cfg.Audit {
 		argv = append(argv, "--no-audit")
+	}
+	if nonoLocalBroker(cfg) {
+		argv = append(argv, "--open-port", strconv.Itoa(cfg.HandoffPort()))
 	}
 	return argv
 }
@@ -612,17 +617,35 @@ func fieldsSet(fields []field) string {
 }
 
 func nonoAllowDomains(cfg *config.Config) []string {
-	if !cfg.Handoff.Enabled {
+	if !cfg.Handoff.Enabled || nonoLocalBroker(cfg) {
 		return cfg.Network
 	}
-	host := "localhost"
-	if u, err := url.Parse(cfg.HandoffURL()); err == nil && u.Hostname() != "" {
-		host = u.Hostname()
-	}
+	host := handoffHost(cfg)
 	if contains(cfg.Network, host) {
 		return cfg.Network
 	}
 	return append(append([]string{}, cfg.Network...), host)
+}
+
+func handoffHost(cfg *config.Config) string {
+	if u, err := url.Parse(cfg.HandoffURL()); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return "localhost"
+}
+
+// nonoLocalBroker reports a broker on this machine. nono's domain allowlist
+// only covers its proxy, so such a broker is reached with --open-port instead.
+func nonoLocalBroker(cfg *config.Config) bool {
+	if !cfg.Handoff.Enabled {
+		return false
+	}
+	host := handoffHost(cfg)
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (n nono) Render(cfg *config.Config) (string, error) {

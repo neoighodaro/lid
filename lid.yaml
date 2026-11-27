@@ -61,6 +61,8 @@ backends:
       - ripgrep
       - jq
       - xz-utils
+      - gcc
+      - libc6-dev
 
   nono:
     paths:

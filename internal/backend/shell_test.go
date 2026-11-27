@@ -241,7 +241,7 @@ func TestNonoShellRunsBashUnderTheRCWhenTheShellBlockIsSet(t *testing.T) {
 	if !strings.Contains(got, "nono run") {
 		t.Errorf("argv = %q, want a run that can carry the rc file", got)
 	}
-	if !strings.HasSuffix(got, "-- bash --rcfile "+rc+" -i") {
+	if !strings.HasSuffix(got, "-- env BASH_SILENCE_DEPRECATION_WARNING=1 bash --rcfile "+rc+" -i") {
 		t.Errorf("argv = %q, want it to start bash under %s", got, rc)
 	}
 	body, err := os.ReadFile(rc)
@@ -314,7 +314,7 @@ func TestNonoPaneArgvCarriesTheGivenProfile(t *testing.T) {
 	}
 
 	rc := filepath.Join(cfg.KitDir(), "shellrc")
-	want := []string{"/usr/local/bin/nono", "run", "--profile", "/priv/lid.jsonc", "--name", "lid", "--workdir", cfg.ProjectDir, "--allow-cwd", "--no-audit", "--", "env", "LID_PANE_CMD=" + paneCmd, "bash", "--rcfile", rc, "-i"}
+	want := []string{"/usr/local/bin/nono", "run", "--profile", "/priv/lid.jsonc", "--name", "lid", "--workdir", cfg.ProjectDir, "--allow-cwd", "--no-audit", "--", "env", "BASH_SILENCE_DEPRECATION_WARNING=1", "LID_PANE_CMD=" + paneCmd, "bash", "--rcfile", rc, "-i"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Errorf("argv = %q, want %q", argv, want)
 	}
