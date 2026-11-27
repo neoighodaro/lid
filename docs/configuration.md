@@ -8,7 +8,7 @@ Each key below says which backend it applies to. Setting a key on a backend that
 
 ## Changing the config of a running sandbox
 
-On sbx, lid records a fingerprint of the config inside the sandbox. When the file changes, `lid start` reports the sandbox as stale, and `lid start --rebuild` replaces it. These keys are applied on every start and never make the sandbox stale: `memory`, `display_name`, `shell`, `claude.settings` and `claude.theme`.
+On sbx, lid records a fingerprint of the config inside the sandbox. When the file changes, `lid start` reports the sandbox as stale, and `lid start --rebuild` replaces it. These keys are applied on every start and never make the sandbox stale: `memory`, `zellij.display_name`, `herdr.display_name`, `shell`, `claude.settings` and `claude.theme`.
 
 nono builds nothing ahead of time, so every change applies on the next `lid start`.
 
@@ -30,17 +30,20 @@ The coding agent to run. Defaults to `claude-code`, the one lid is tested with. 
 
 `sbx` (the default) or `nono`. See [backends](backends.md). `lid start <backend>` or `--backend` overrides it for one project until `lid stop`.
 
-### `display_name`
+### `zellij.display_name`, `herdr.display_name`
 
-The name of the terminal tab lid starts in.
+The name lid gives the terminal tab it starts in, set for each terminal separately. A terminal with no `display_name` keeps its tab name.
 
 ```yaml
-display_name: my-project
+zellij:
+  display_name: my-project
+herdr:
+  display_name: my-project
 ```
 
-### `zellij.display_name`
+### `display_name`
 
-Deprecated. Use `display_name`.
+Deprecated. Use `zellij.display_name` and `herdr.display_name`. It still names the tab in any terminal that has no `display_name` of its own.
 
 ## Image (sbx only)
 

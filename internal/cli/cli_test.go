@@ -155,6 +155,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 		"shell:\n  directory: /workspace\n  aliases: {g: git}",
 		"claude:\n  theme: dark\n  plugins:\n    marketplaces: [org/market]\n    install: [thing@market]\n  settings:\n    model: claude-opus-5",
 		"zellij:\n  display_name: Demo",
+		"herdr:\n  display_name: Demo",
 		"memory: |\n  line one\n  line two",
 		"",
 	}, "\n"))
@@ -168,7 +169,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 		"scripts.on_create", "scripts.on_start", "handoff", "bridges",
 		"shell.directory", "shell.aliases", "claude.theme",
 		"claude.marketplaces", "claude.install", "claude.settings",
-		"zellij", "memory",
+		"zellij.display_name", "herdr.display_name", "memory",
 	} {
 		if !strings.Contains(got.out, want) {
 			t.Errorf("output never mentions %q:\n%s", want, got.out)
@@ -1321,7 +1322,7 @@ func TestStartWarnsButStillLaunchesWhenTheSettingsCannotBeApplied(t *testing.T) 
 
 func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
+	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7"}
 
 	res := runSbxStart(t, dir, h, "start")
@@ -1329,14 +1330,14 @@ func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	if !h.ran("rename-tab") {
 		t.Errorf("the tab kept its default name: %v", h.probes)
 	}
-	if strings.Contains(res.err, "zellij") {
-		t.Errorf("zellij is wired up but still reported as ignored:\n%s", res.err)
+	if strings.Contains(res.err, "deprecated") {
+		t.Errorf("warned about a config already on the current keys:\n%s", res.err)
 	}
 }
 
 func TestStartNamesTheHerdrTabItWasLaunchedFrom(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
+	write(t, dir, "lid.yaml", "name: api\nherdr:\n  display_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
 
 	res := runSbxStart(t, dir, h, "start")
@@ -1349,24 +1350,39 @@ func TestStartNamesTheHerdrTabItWasLaunchedFrom(t *testing.T) {
 	}
 }
 
-func TestStartStillNamesTheTabFromTheDeprecatedZellijKeyAndSaysToMoveIt(t *testing.T) {
+func TestStartNamesOnlyTheTerminalsThatHaveADisplayName(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7", herdrID: "t7"}
+
+	runSbxStart(t, dir, h, "start")
+
+	if !h.ran("rename-tab") {
+		t.Errorf("the zellij tab kept its default name: %v", h.probes)
+	}
+	if h.ran("tab.rename") {
+		t.Errorf("renamed the Herdr tab with no herdr.display_name: %v", h.probes)
+	}
+}
+
+func TestStartStillNamesTheTabsFromTheDeprecatedDisplayNameAndSaysToMoveIt(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7", herdrID: "t7"}
 
 	res := runSbxStart(t, dir, h, "start")
 
 	if !h.ran("rename-tab") || !h.ran("tab.rename") {
-		t.Errorf("the old key no longer names the tab: %v", h.probes)
+		t.Errorf("the old key no longer names the tabs: %v", h.probes)
 	}
-	if !strings.Contains(res.err, "zellij.display_name") || !strings.Contains(res.err, "deprecated") {
-		t.Errorf("never said zellij.display_name is deprecated:\n%s", res.err)
+	if !strings.Contains(res.err, "display_name") || !strings.Contains(res.err, "deprecated") {
+		t.Errorf("never said display_name is deprecated:\n%s", res.err)
 	}
 }
 
-func TestStartPrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
+func TestStartPrefersTheHerdrDisplayNameOverTheTopLevelOne(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: new\nzellij:\n  display_name: old\n")
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: old\nherdr:\n  display_name: new\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
 
 	runSbxStart(t, dir, h, "start")
@@ -1378,7 +1394,7 @@ func TestStartPrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
 		}
 	}
 	if !strings.HasSuffix(name, " new") {
-		t.Errorf("named the tab %q, want it after the top-level display_name: %v", name, h.probes)
+		t.Errorf("named the tab %q, want it after herdr.display_name: %v", name, h.probes)
 	}
 }
 

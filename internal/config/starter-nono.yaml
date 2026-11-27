@@ -115,12 +115,15 @@ scripts:
   on_start: []
     # - ./scripts/warm-cache.sh
 
-# Name for the terminal tab lid starts in, inside zellij or Herdr.
-# display_name: my-project
+# Name for the terminal tab lid starts in, set for each terminal.
+# zellij:
+#   display_name: my-project
 
-# Let the agent open Herdr panes that run a command in this sandbox.
-# Only takes effect inside Herdr, with the claude-code agent.
 # herdr:
+#   # Name for the Herdr tab lid starts in.
+#   display_name: my-project
+#   # Let the agent open Herdr panes that run a command in this sandbox.
+#   # Only takes effect inside Herdr, with the claude-code agent.
 #   panes: true
 
 # What 'lid shell' opens. Set either key and the shell becomes bash, so it can

@@ -737,6 +737,7 @@ func TestKeysAppliedOnEveryStartDoNotMakeASandboxStale(t *testing.T) {
 		{"claude.settings", "name: lid\nclaude:\n  settings:\n    model: claude-opus-5\n"},
 		{"memory", "name: lid\nmemory: be nice\n"},
 		{"zellij", "name: lid\nzellij:\n  display_name: Lid\n"},
+		{"herdr", "name: lid\nherdr:\n  display_name: Lid\n"},
 		{"display_name", "name: lid\ndisplay_name: Lid\n"},
 		{"shell", "name: lid\nshell:\n  aliases:\n    g: git\n"},
 	} {
@@ -1252,6 +1253,7 @@ func TestFileHashIgnoresTheKeysAppliedOnEveryStart(t *testing.T) {
 		{"claude.settings", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-sonnet-5\nmemory: be brief\nzellij:\n  display_name: api\n"},
 		{"memory", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: say more\nzellij:\n  display_name: api\n"},
 		{"zellij.display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: web\n"},
+		{"herdr.display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: api\nherdr:\n  display_name: web\n"},
 		{"display_name", "name: api\npackages:\n  - jq\nclaude:\n  settings:\n    model: claude-opus-5\nmemory: be brief\nzellij:\n  display_name: api\ndisplay_name: web\n"},
 	} {
 		t.Run(tt.what, func(t *testing.T) {
@@ -1395,37 +1397,61 @@ func TestCloneIsReadFromTheConfig(t *testing.T) {
 	}
 }
 
-func TestTabNameComesFromTheTopLevelDisplayName(t *testing.T) {
-	cfg := loadBody(t, "name: lid\ndisplay_name: Lid\n")
+func TestEachTerminalNamesItsTabFromItsOwnKey(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nzellij:\n  display_name: Z\nherdr:\n  display_name: H\n")
 
-	if got := cfg.TabName(); got != "Lid" {
-		t.Errorf("TabName() = %q, want Lid", got)
+	if got := cfg.ZellijTabName(); got != "Z" {
+		t.Errorf("ZellijTabName() = %q, want Z", got)
+	}
+	if got := cfg.HerdrTabName(); got != "H" {
+		t.Errorf("HerdrTabName() = %q, want H", got)
 	}
 	if got := cfg.Deprecations(); len(got) != 0 {
 		t.Errorf("Deprecations() = %v for a config on the current keys", got)
 	}
 }
 
-func TestTabNameStillReadsTheDeprecatedZellijDisplayName(t *testing.T) {
-	cfg := loadBody(t, "name: lid\nzellij:\n  display_name: Lid\n")
+func TestATerminalWithoutADisplayNameLeavesItsTabAlone(t *testing.T) {
+	cfg := loadBody(t, "name: lid\nzellij:\n  display_name: Z\n")
 
-	if got := cfg.TabName(); got != "Lid" {
-		t.Errorf("TabName() = %q, want Lid from zellij.display_name", got)
-	}
-	got := cfg.Deprecations()
-	if len(got) != 1 || !strings.Contains(got[0], "zellij.display_name") || !strings.Contains(got[0], "display_name:") {
-		t.Errorf("Deprecations() = %v, want one note naming zellij.display_name and where to move it", got)
+	if got := cfg.HerdrTabName(); got != "" {
+		t.Errorf("HerdrTabName() = %q, want no name so the Herdr tab is left alone", got)
 	}
 }
 
-func TestTabNamePrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
-	cfg := loadBody(t, "name: lid\ndisplay_name: new\nzellij:\n  display_name: old\n")
+func TestTheDeprecatedTopLevelDisplayNameStillNamesEveryTab(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ndisplay_name: Lid\n")
 
-	if got := cfg.TabName(); got != "new" {
-		t.Errorf("TabName() = %q, want new", got)
+	if cfg.ZellijTabName() != "Lid" || cfg.HerdrTabName() != "Lid" {
+		t.Errorf("tab names = %q, %q, want Lid for both", cfg.ZellijTabName(), cfg.HerdrTabName())
 	}
-	if got := cfg.Deprecations(); len(got) != 1 {
-		t.Errorf("Deprecations() = %v, want the leftover zellij.display_name flagged", got)
+	got := cfg.Deprecations()
+	if len(got) != 1 || !strings.Contains(got[0], "display_name") || !strings.Contains(got[0], "zellij.display_name") || !strings.Contains(got[0], "herdr.display_name") {
+		t.Errorf("Deprecations() = %v, want one note saying to move display_name to both terminal keys", got)
+	}
+}
+
+func TestATerminalKeyWinsOverTheDeprecatedTopLevelOne(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ndisplay_name: old\nzellij:\n  display_name: new\n")
+
+	if got := cfg.ZellijTabName(); got != "new" {
+		t.Errorf("ZellijTabName() = %q, want new", got)
+	}
+	if got := cfg.HerdrTabName(); got != "old" {
+		t.Errorf("HerdrTabName() = %q, want old from the top-level key", got)
+	}
+	got := cfg.Deprecations()
+	if len(got) != 1 || !strings.Contains(got[0], "herdr.display_name") || strings.Contains(got[0], "zellij.display_name") {
+		t.Errorf("Deprecations() = %v, want a note naming only the key still missing", got)
+	}
+}
+
+func TestTheTopLevelDisplayNameIsIgnoredOnceEveryTerminalHasItsOwn(t *testing.T) {
+	cfg := loadBody(t, "name: lid\ndisplay_name: old\nzellij:\n  display_name: z\nherdr:\n  display_name: h\n")
+
+	got := cfg.Deprecations()
+	if len(got) != 1 || !strings.Contains(got[0], "ignored") {
+		t.Errorf("Deprecations() = %v, want a note that display_name is ignored", got)
 	}
 }
 

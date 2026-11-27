@@ -132,14 +132,13 @@ type PHP struct {
 	Extensions []string `yaml:"extensions"`
 }
 
-// Zellij holds the old place for the tab name. Deprecated: use the top-level
-// display_name, which every terminal lid names a tab in reads.
 type Zellij struct {
 	DisplayName string `yaml:"display_name"`
 }
 
 type Herdr struct {
-	Panes bool `yaml:"panes"`
+	DisplayName string `yaml:"display_name"`
+	Panes       bool   `yaml:"panes"`
 }
 
 type Handoff struct {
@@ -828,27 +827,40 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-// TabName is the name lid gives the terminal tab it starts in: the top-level
-// display_name, or the deprecated zellij.display_name when that is all there is.
-func (c *Config) TabName() string {
-	if c.DisplayName != "" {
-		return c.DisplayName
+// ZellijTabName names the zellij tab lid starts in. Empty leaves it alone.
+func (c *Config) ZellijTabName() string {
+	return orDeprecatedDisplayName(c.Zellij.DisplayName, c.DisplayName)
+}
+
+// HerdrTabName names the Herdr tab lid starts in. Empty leaves it alone.
+func (c *Config) HerdrTabName() string {
+	return orDeprecatedDisplayName(c.Herdr.DisplayName, c.DisplayName)
+}
+
+func orDeprecatedDisplayName(own, top string) string {
+	if own != "" {
+		return own
 	}
-	return c.Zellij.DisplayName
+	return top
 }
 
 // Deprecations lists the keys in the config that still work but should be
 // moved, each with where they go now.
 func (c *Config) Deprecations() []string {
-	var notes []string
-	if c.Zellij.DisplayName != "" {
-		note := "zellij.display_name in " + c.Ref() + " is deprecated; move it to a top-level display_name: " + c.Zellij.DisplayName
-		if c.DisplayName != "" {
-			note = "zellij.display_name in " + c.Ref() + " is deprecated and ignored, since display_name is set; remove it"
-		}
-		notes = append(notes, note)
+	if c.DisplayName == "" {
+		return nil
 	}
-	return notes
+	var missing []string
+	if c.Zellij.DisplayName == "" {
+		missing = append(missing, "zellij.display_name")
+	}
+	if c.Herdr.DisplayName == "" {
+		missing = append(missing, "herdr.display_name")
+	}
+	if len(missing) == 0 {
+		return []string{"display_name in " + c.Ref() + " is deprecated and ignored, since zellij.display_name and herdr.display_name are set; remove it"}
+	}
+	return []string{"display_name in " + c.Ref() + " is deprecated; set " + strings.Join(missing, " and ") + ": " + c.DisplayName + " instead"}
 }
 
 // Ref names the config relative to the project, so generated files and error
