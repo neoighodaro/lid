@@ -106,17 +106,5 @@ func start(cmd *cobra.Command, a *app.App, args []string, opts startOptions) err
 
 	nameTab(a, cfg)
 
-	provisioned, err := provisionSandbox(cmd, a, b, cfg, backend.Options{Rebuild: opts.rebuild})
-	if err != nil {
-		return err
-	}
-	if err := rememberIfNamed(cfg); err != nil {
-		return err
-	}
-
-	argv, err := b.StartArgv(cfg, provisioned.Path, agentArgs)
-	if err != nil {
-		return err
-	}
-	return a.Launch(argv)
+	return runAgent(cmd, a, b, cfg, backend.Options{Rebuild: opts.rebuild}, agentArgs)
 }

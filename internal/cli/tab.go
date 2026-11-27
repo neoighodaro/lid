@@ -9,13 +9,12 @@ import (
 )
 
 // nameTab names the terminal tab lid was started from, in zellij or Herdr,
-// after the project's display name, and says when that name sits under a
+// after that terminal's display name, and says when a name sits under a
 // deprecated key.
 func nameTab(a *app.App, cfg *config.Config) {
 	for _, note := range cfg.Deprecations() {
 		fmt.Fprintln(a.Err, ui.Err.Warn.Render(note))
 	}
-	name := cfg.TabName()
-	a.Zellij.RenameTab(name)
-	a.Herdr.RenameTab(name)
+	a.Zellij.RenameTab(cfg.ZellijTabName())
+	a.Herdr.RenameTab(cfg.HerdrTabName())
 }

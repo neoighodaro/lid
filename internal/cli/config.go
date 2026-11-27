@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/app"
@@ -69,6 +70,9 @@ func configRows(cfg *config.Config) [][2]string {
 		{"template", cfg.Template},
 		{"workspace", cfg.Workspace},
 		{"clone", boolRow(cfg.Clone)},
+		{"resources.cpus", cpusRow(cfg.Resources.CPUs)},
+		{"resources.memory", cfg.Resources.Memory},
+		{"extra_workspaces", strings.Join(cfg.ExtraWorkspaces, ", ")},
 		{"packages", strings.Join(cfg.Packages, ", ")},
 		{"runtimes", joinRuntimes(cfg.Runtimes)},
 		{"php.extensions", strings.Join(cfg.PHP.Extensions, ", ")},
@@ -85,6 +89,7 @@ func configRows(cfg *config.Config) [][2]string {
 		{"paths.deny", strings.Join(cfg.Paths.Deny, ", ")},
 		{"scripts.on_create", strings.Join(cfg.Scripts.OnCreate, ", ")},
 		{"scripts.on_start", strings.Join(cfg.Scripts.OnStart, ", ")},
+		{"herdr.panes", boolRow(cfg.Herdr.Panes)},
 		{"handoff", handoffRow(cfg)},
 		{"bridges", joinBridges(cfg.Bridges)},
 		{"mcp", strings.Join(cfg.MCP, ", ")},
@@ -96,7 +101,8 @@ func configRows(cfg *config.Config) [][2]string {
 		{"claude.install_optional", strings.Join(cfg.Claude.Plugins.InstallOptional, ", ")},
 		{"claude.settings", joinAnyKeys(cfg.Claude.Settings)},
 		{"display_name", cfg.DisplayName},
-		{"zellij", cfg.Zellij.DisplayName},
+		{"zellij.display_name", cfg.Zellij.DisplayName},
+		{"herdr.display_name", cfg.Herdr.DisplayName},
 		{"memory", lineCount(cfg.Memory)},
 	} {
 		if row[1] != "" {
@@ -104,6 +110,13 @@ func configRows(cfg *config.Config) [][2]string {
 		}
 	}
 	return rows
+}
+
+func cpusRow(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 // boolRow renders a flag the way every other row reads: the empty string means

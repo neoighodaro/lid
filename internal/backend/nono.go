@@ -13,6 +13,7 @@ import (
 
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/failure"
+	"github.com/neoighodaro/lid/internal/panes"
 )
 
 const (
@@ -373,15 +374,94 @@ func (nono) ShellArgv(_ Host, cfg *config.Config, profilePath string, command []
 		return nonoShellArgv(cfg, "shell", profilePath), nil
 	}
 
-	rc := nonoShellRCPath(cfg)
-	if err := os.MkdirAll(filepath.Dir(rc), 0o755); err != nil {
-		return nil, failure.New("cannot create %s: %v", filepath.Dir(rc), err)
-	}
-	if err := os.WriteFile(rc, []byte(shellRC(cfg, dir)), 0o644); err != nil {
-		return nil, failure.New("cannot write the shell's init file: %v", err).
-			WithFix("the shell would start without what the shell: block in %s describes", cfg.Ref())
+	rc, err := nonoWriteShellRC(cfg, dir)
+	if err != nil {
+		return nil, err
 	}
 	return append(nonoShellArgv(cfg, "run", profilePath), "--", "bash", "--rcfile", rc, "-i"), nil
+}
+
+func nonoWriteShellRC(cfg *config.Config, dir string) (string, error) {
+	rc := nonoShellRCPath(cfg)
+	if err := writeKitFile(cfg.ProjectDir, rc, []byte(shellRC(cfg, dir))); err != nil {
+		return "", failure.New("cannot write the shell's init file: %v", err).
+			WithFix("the shell would start without what the shell: block in %s describes", cfg.Ref())
+	}
+	return rc, nil
+}
+
+// writeKitFile writes a file the agent may be able to replace a directory or a
+// link under. Every directory from root down must be a real directory, and the
+// file lands through a new temporary file renamed into place, so a link where
+// the file should be is replaced rather than followed.
+func writeKitFile(root, path string, body []byte) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%s is not under %s", path, root)
+	}
+
+	dir := root
+	parts := strings.Split(filepath.Dir(rel), string(filepath.Separator))
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	for _, part := range parts {
+		if part == "." {
+			continue
+		}
+		dir = filepath.Join(dir, part)
+		if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		if err := requireRealDir(dir); err != nil {
+			return err
+		}
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func requireRealDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is a link or not a directory", path)
+	}
+	return nil
+}
+
+// PaneArgv runs bash under the rc file even with an empty shell: block, since
+// the rc file is what runs the command, and takes the profile path as given.
+func (nono) PaneArgv(h Host, cfg *config.Config, profilePath, command string) ([]string, error) {
+	exe, err := h.lookPath("nono")
+	if err != nil {
+		return nil, failure.New("cannot find nono on PATH: %v", err)
+	}
+	rc, err := nonoWriteShellRC(cfg, shellDir(cfg, cfg.ProjectDir))
+	if err != nil {
+		return nil, err
+	}
+	argv := nonoShellArgv(cfg, "run", profilePath)
+	argv[0] = exe
+	return append(argv, "--", "env", PaneCmdVar+"="+command, "bash", "--rcfile", rc, "-i"), nil
 }
 
 // nonoShellArgv leaves the audit trail off unless audit: asks for it. Its
@@ -681,11 +761,37 @@ func nonoFilesystemFor(cfg *config.Config) *nonoFilesystem {
 	fs.ReadFile = append(fs.ReadFile, grants["read_file"]...)
 	fs.Allow = append(fs.Allow, grants["allow"]...)
 	fs.Deny = append(fs.Deny, grants["deny"]...)
+	fs.Deny = append(fs.Deny, nonoLidDenies()...)
 
 	if len(fs.Allow) == 0 && len(fs.Deny) == 0 && len(fs.Read) == 0 && len(fs.ReadFile) == 0 {
 		return nil
 	}
 	return &fs
+}
+
+// nonoLidDenies keeps the agent out of lid's cache dir, where the pane files
+// and private profiles that decide what runs on the host are kept.
+func nonoLidDenies() []string {
+	root, err := panes.Root()
+	if err != nil {
+		return nil
+	}
+	dir, err := panes.Path()
+	if err != nil {
+		return nil
+	}
+	return []string{homeRelative(root), homeRelative(dir)}
+}
+
+func homeRelative(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if rel, ok := strings.CutPrefix(path, filepath.Clean(home)+string(filepath.Separator)); ok {
+		return "$HOME/" + rel
+	}
+	return path
 }
 
 func nonoAgentNames() []string {

@@ -82,6 +82,7 @@ var (
 	nameRe     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 	hostnameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
 	portRe     = regexp.MustCompile(`^(?:(\d+):)?(\d+)(?:/(tcp|tcp4|tcp6|udp|udp4|udp6))?$`)
+	memoryRe   = regexp.MustCompile(`^(?i)([1-9][0-9]*)([mg])$`)
 
 	unknownFieldRe = regexp.MustCompile(`^line (\d+): field (\S+) not found in type \S+$`)
 	inTypeRe       = regexp.MustCompile(` in type \S+`)
@@ -131,10 +132,13 @@ type PHP struct {
 	Extensions []string `yaml:"extensions"`
 }
 
-// Zellij holds the old place for the tab name. Deprecated: use the top-level
-// display_name, which every terminal lid names a tab in reads.
 type Zellij struct {
 	DisplayName string `yaml:"display_name"`
+}
+
+type Herdr struct {
+	DisplayName string `yaml:"display_name"`
+	Panes       bool   `yaml:"panes"`
 }
 
 type Handoff struct {
@@ -195,34 +199,102 @@ type Bridge struct {
 	Env      string `yaml:"env"`
 }
 
+// Resources sizes an sbx sandbox. Both are fixed when the sandbox is created,
+// and zero values leave sbx to its own defaults.
+type Resources struct {
+	CPUs   int    `yaml:"cpus"`
+	Memory string `yaml:"memory"`
+}
+
+func (r Resources) IsSet() bool {
+	return r.CPUs != 0 || r.Memory != ""
+}
+
+// ExtraWorkspace is a host directory mounted into an sbx sandbox beside the
+// project, written as sbx takes it: HOST, HOST:ro, HOST:SANDBOX_PATH or
+// HOST:SANDBOX_PATH:ro.
+type ExtraWorkspace struct {
+	Host     string
+	Sandbox  string
+	ReadOnly bool
+}
+
+func ParseExtraWorkspace(entry string) (ExtraWorkspace, error) {
+	parts := strings.Split(entry, ":")
+	w := ExtraWorkspace{Host: parts[0]}
+	rest := parts[1:]
+	if n := len(rest); n > 0 && rest[n-1] == "ro" {
+		w.ReadOnly = true
+		rest = rest[:n-1]
+	}
+	if len(rest) == 1 {
+		w.Sandbox = rest[0]
+	}
+	if len(rest) > 1 || (len(rest) == 1 && !filepath.IsAbs(w.Sandbox)) {
+		return ExtraWorkspace{}, failure.New("extra workspace %q is not a workspace mount", entry).
+			WithFix("write it as HOST, HOST:ro, HOST:SANDBOX_PATH or HOST:SANDBOX_PATH:ro, with absolute paths")
+	}
+	if strings.TrimSpace(w.Host) == "" {
+		return ExtraWorkspace{}, failure.New("extra workspace %q has no host path", entry).
+			WithFix("name the host directory to mount")
+	}
+	if w.Host != "~" && !strings.HasPrefix(w.Host, "~/") && !filepath.IsAbs(w.Host) {
+		return ExtraWorkspace{}, failure.New("extra workspace %q is not an absolute path", entry).
+			WithFix("write the host path in full, from / or ~")
+	}
+	return w, nil
+}
+
+// Arg returns w as sbx create takes it, with a leading ~ on the host path
+// expanded to home: sbx gets the path as an argument, not through a shell.
+func (w ExtraWorkspace) Arg(home string) string {
+	host := w.Host
+	if host == "~" {
+		host = home
+	} else if strings.HasPrefix(host, "~/") {
+		host = filepath.Join(home, host[2:])
+	}
+	arg := host
+	if w.Sandbox != "" {
+		arg += ":" + w.Sandbox
+	}
+	if w.ReadOnly {
+		arg += ":ro"
+	}
+	return arg
+}
+
 type Config struct {
-	Name           string            `yaml:"name"`
-	Agent          string            `yaml:"agent"`
-	DisplayName    string            `yaml:"display_name"`
-	Backend        string            `yaml:"backend"`
-	BaseImage      string            `yaml:"base_image"`
-	Template       string            `yaml:"template"`
-	Workspace      string            `yaml:"workspace"`
-	Clone          bool              `yaml:"clone"`
-	Packages       []string          `yaml:"packages"`
-	Runtimes       map[string]Scalar `yaml:"runtimes"`
-	Ports          []Scalar          `yaml:"ports"`
-	Env            map[string]Scalar `yaml:"env"`
-	EnvFile        []string          `yaml:"env_file"`
-	Network        []string          `yaml:"network"`
-	NetworkProfile string            `yaml:"network_profile"`
-	Audit          bool              `yaml:"audit"`
-	AllowCommands  []string          `yaml:"allow_commands"`
-	Paths          Paths             `yaml:"paths"`
-	Scripts        Scripts           `yaml:"scripts"`
-	Shell          Shell             `yaml:"shell"`
-	Claude         Claude            `yaml:"claude"`
-	PHP            PHP               `yaml:"php"`
-	Zellij         Zellij            `yaml:"zellij"`
-	Memory         string            `yaml:"memory"`
-	Handoff        Handoff           `yaml:"handoff"`
-	Bridges        []Bridge          `yaml:"bridges"`
-	MCP            []string          `yaml:"mcp"`
+	Name            string            `yaml:"name"`
+	Agent           string            `yaml:"agent"`
+	DisplayName     string            `yaml:"display_name"`
+	Backend         string            `yaml:"backend"`
+	BaseImage       string            `yaml:"base_image"`
+	Template        string            `yaml:"template"`
+	Workspace       string            `yaml:"workspace"`
+	Clone           bool              `yaml:"clone"`
+	Packages        []string          `yaml:"packages"`
+	Runtimes        map[string]Scalar `yaml:"runtimes"`
+	Ports           []Scalar          `yaml:"ports"`
+	Env             map[string]Scalar `yaml:"env"`
+	EnvFile         []string          `yaml:"env_file"`
+	Network         []string          `yaml:"network"`
+	NetworkProfile  string            `yaml:"network_profile"`
+	Audit           bool              `yaml:"audit"`
+	AllowCommands   []string          `yaml:"allow_commands"`
+	Paths           Paths             `yaml:"paths"`
+	Scripts         Scripts           `yaml:"scripts"`
+	Shell           Shell             `yaml:"shell"`
+	Claude          Claude            `yaml:"claude"`
+	PHP             PHP               `yaml:"php"`
+	Zellij          Zellij            `yaml:"zellij"`
+	Memory          string            `yaml:"memory"`
+	Herdr           Herdr             `yaml:"herdr"`
+	Handoff         Handoff           `yaml:"handoff"`
+	Bridges         []Bridge          `yaml:"bridges"`
+	MCP             []string          `yaml:"mcp"`
+	Resources       Resources         `yaml:"resources"`
+	ExtraWorkspaces []string          `yaml:"extra_workspaces"`
 
 	Path          string        `yaml:"-"`
 	ProjectDir    string        `yaml:"-"`
@@ -538,6 +610,37 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.Resources.validate(); err != nil {
+		return err
+	}
+
+	for _, entry := range c.ExtraWorkspaces {
+		if _, err := ParseExtraWorkspace(entry); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r Resources) validate() error {
+	if r.CPUs < 0 {
+		return failure.New("resources.cpus is %d", r.CPUs).
+			WithFix("give it a positive number of CPUs, or leave it out to use all of the host's")
+	}
+	if r.Memory == "" {
+		return nil
+	}
+	m := memoryRe.FindStringSubmatch(r.Memory)
+	if m == nil {
+		return failure.New("resources.memory %q is not a memory size", r.Memory).
+			WithFix("write it in binary units, like 512m or 8g")
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || (strings.EqualFold(m[2], "m") && n < 512) {
+		return failure.New("resources.memory %q is below 512m", r.Memory).
+			WithFix("sbx needs at least 512m")
+	}
 	return nil
 }
 
@@ -589,6 +692,8 @@ func (c *Config) validateBackendExclusions() error {
 		{"template", c.Template != "", "a nono session is a host process, not a container"},
 		{"packages", len(c.Packages) > 0, "install them on your host yourself"},
 		{"clone", c.Clone, "a nono session works in the project itself, so there is nothing to clone into"},
+		{"resources", c.Resources.IsSet(), "a nono session runs on the host's own CPUs and memory"},
+		{"extra_workspaces", len(c.ExtraWorkspaces) > 0, "grant host directories with paths instead"},
 	} {
 		if conflict.set {
 			return failure.New("the %s backend cannot use %s", c.Backend, conflict.field).WithFix("%s, or switch to the %s backend", conflict.why, BackendSbx)
@@ -722,27 +827,40 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-// TabName is the name lid gives the terminal tab it starts in: the top-level
-// display_name, or the deprecated zellij.display_name when that is all there is.
-func (c *Config) TabName() string {
-	if c.DisplayName != "" {
-		return c.DisplayName
+// ZellijTabName names the zellij tab lid starts in. Empty leaves it alone.
+func (c *Config) ZellijTabName() string {
+	return orDeprecatedDisplayName(c.Zellij.DisplayName, c.DisplayName)
+}
+
+// HerdrTabName names the Herdr tab lid starts in. Empty leaves it alone.
+func (c *Config) HerdrTabName() string {
+	return orDeprecatedDisplayName(c.Herdr.DisplayName, c.DisplayName)
+}
+
+func orDeprecatedDisplayName(own, top string) string {
+	if own != "" {
+		return own
 	}
-	return c.Zellij.DisplayName
+	return top
 }
 
 // Deprecations lists the keys in the config that still work but should be
 // moved, each with where they go now.
 func (c *Config) Deprecations() []string {
-	var notes []string
-	if c.Zellij.DisplayName != "" {
-		note := "zellij.display_name in " + c.Ref() + " is deprecated; move it to a top-level display_name: " + c.Zellij.DisplayName
-		if c.DisplayName != "" {
-			note = "zellij.display_name in " + c.Ref() + " is deprecated and ignored, since display_name is set; remove it"
-		}
-		notes = append(notes, note)
+	if c.DisplayName == "" {
+		return nil
 	}
-	return notes
+	var missing []string
+	if c.Zellij.DisplayName == "" {
+		missing = append(missing, "zellij.display_name")
+	}
+	if c.Herdr.DisplayName == "" {
+		missing = append(missing, "herdr.display_name")
+	}
+	if len(missing) == 0 {
+		return []string{"display_name in " + c.Ref() + " is deprecated and ignored, since zellij.display_name and herdr.display_name are set; remove it"}
+	}
+	return []string{"display_name in " + c.Ref() + " is deprecated; set " + strings.Join(missing, " and ") + ": " + c.DisplayName + " instead"}
 }
 
 // Ref names the config relative to the project, so generated files and error
@@ -823,6 +941,7 @@ func withoutStartApplied(data []byte) []byte {
 func strippedJSON(doc map[string]any, fallback []byte) []byte {
 	delete(doc, "memory")
 	delete(doc, "zellij")
+	delete(doc, "herdr")
 	delete(doc, "display_name")
 	delete(doc, "shell")
 	if claude, ok := doc["claude"].(map[string]any); ok {

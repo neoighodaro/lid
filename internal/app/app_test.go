@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/neoighodaro/lid/internal/failure"
 )
@@ -181,5 +182,67 @@ func TestNewReportsTheDirectoryItIsRunningIn(t *testing.T) {
 	}
 	if cwd != "/somewhere" {
 		t.Errorf("workingDir = %q, want /somewhere", cwd)
+	}
+}
+
+func launchAndSignal(t *testing.T, a *App, script string, sig syscall.Signal) error {
+	t.Helper()
+	ready := filepath.Join(t.TempDir(), "ready")
+	go func() {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if _, err := os.Stat(ready); err == nil {
+				syscall.Kill(os.Getpid(), sig)
+				return
+			}
+		}
+	}()
+	return a.Launch([]string{"sh", "-c", script + "; touch " + ready + "; i=0; while [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done"})
+}
+
+func TestLaunchForwardsSignalsToTheAgent(t *testing.T) {
+	for name, sig := range map[string]syscall.Signal{"HUP": syscall.SIGHUP, "TERM": syscall.SIGTERM} {
+		a := newTestApp(t.TempDir())
+		a.In = strings.NewReader("")
+		err := launchAndSignal(t, a, "trap 'exit 7' "+name, sig)
+		var exit *ExitError
+		if !errors.As(err, &exit) || exit.Code != 7 {
+			t.Errorf("%v: Launch = %v, want the agent's own exit status", sig, err)
+		}
+	}
+}
+
+// The terminal already sends Ctrl-C to the agent, which shares lid's process
+// group, so lid sending another would make it look like a second Ctrl-C.
+func TestLaunchSurvivesSIGINTWithoutForwardingIt(t *testing.T) {
+	a := newTestApp(t.TempDir())
+	a.In = strings.NewReader("")
+	ready := filepath.Join(t.TempDir(), "ready")
+	go func() {
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			if _, err := os.Stat(ready); err == nil {
+				syscall.Kill(os.Getpid(), syscall.SIGINT)
+				return
+			}
+		}
+	}()
+
+	err := a.Launch([]string{"sh", "-c", "trap 'exit 7' INT; touch " + ready + "; i=0; while [ $i -lt 20 ]; do sleep 0.05; i=$((i+1)); done"})
+
+	if err != nil {
+		t.Errorf("Launch = %v, want the agent to finish without a second SIGINT", err)
+	}
+}
+
+func TestLaunchKillsAnAgentThatIgnoresTermination(t *testing.T) {
+	defer func(d time.Duration) { killGrace = d }(killGrace)
+	killGrace = 100 * time.Millisecond
+	a := newTestApp(t.TempDir())
+	a.In = strings.NewReader("")
+
+	err := launchAndSignal(t, a, "trap '' TERM", syscall.SIGTERM)
+
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != 128+int(syscall.SIGKILL) {
+		t.Errorf("Launch = %v, want the agent killed", err)
 	}
 }

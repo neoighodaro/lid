@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/neoighodaro/lid/internal/config"
 	"github.com/neoighodaro/lid/internal/handoff"
 	"github.com/neoighodaro/lid/internal/herdr"
+	"github.com/neoighodaro/lid/internal/panes"
 	"github.com/neoighodaro/lid/internal/update"
 	"github.com/neoighodaro/lid/internal/zellij"
 )
@@ -152,6 +155,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 		"shell:\n  directory: /workspace\n  aliases: {g: git}",
 		"claude:\n  theme: dark\n  plugins:\n    marketplaces: [org/market]\n    install: [thing@market]\n  settings:\n    model: claude-opus-5",
 		"zellij:\n  display_name: Demo",
+		"herdr:\n  display_name: Demo",
 		"memory: |\n  line one\n  line two",
 		"",
 	}, "\n"))
@@ -165,7 +169,7 @@ func TestConfigCommandShowsEveryKeyItRead(t *testing.T) {
 		"scripts.on_create", "scripts.on_start", "handoff", "bridges",
 		"shell.directory", "shell.aliases", "claude.theme",
 		"claude.marketplaces", "claude.install", "claude.settings",
-		"zellij", "memory",
+		"zellij.display_name", "herdr.display_name", "memory",
 	} {
 		if !strings.Contains(got.out, want) {
 			t.Errorf("output never mentions %q:\n%s", want, got.out)
@@ -1101,12 +1105,28 @@ type sbxStartHost struct {
 	stdin    io.Reader
 	probes   [][]string
 	argv     []string
+
+	mu       sync.Mutex
+	onAttach func(argv []string) error
+	onExec   func(argv []string)
+	splits   [][]string
+	splitErr error
+	noAttach bool
+	bins     map[string]string
+	badNono  bool
+	execErr  func(argv []string) error
+}
+
+func (h *sbxStartHost) record(argv []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.probes = append(h.probes, argv)
 }
 
 // zellij answers as a session whose focused pane is terminal_7, on a tab that
 // has never been renamed.
 func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
 	switch {
 	case strings.Contains(strings.Join(argv, " "), "list-clients"):
 		return []byte("CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND\n1 terminal_7 lid\n"), nil
@@ -1119,21 +1139,40 @@ func (h *sbxStartHost) zellij(argv []string) ([]byte, error) {
 // herdr answers as a Herdr window with terminal t7 in tab tb1, a tab that has
 // never been renamed.
 func (h *sbxStartHost) herdr(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
-	if strings.Join(argv, " ") == "herdr-app ls" {
-		return []byte(`{"spaces": [{"id": "sp1", "tabs": [{"id": "tb1", "name": "1", "terminals": [{"terminal": "t7"}]}]}]}`), nil
+	h.record(argv)
+	if len(argv) == 2 && filepath.Base(argv[0]) == "herdr-app" && argv[1] == "ls" {
+		return []byte(`{"spaces": [{"id": "sp1", "tabs": [{"id": "tb1", "name": "1", "terminals": [{"terminal": "t7", "pane": "p7"}]}]}]}`), nil
+	}
+	if len(argv) == 4 && argv[2] == "pane.split" {
+		h.mu.Lock()
+		h.splits = append(h.splits, argv)
+		h.mu.Unlock()
+		if h.splitErr != nil {
+			return nil, h.splitErr
+		}
+		return []byte(`{"pane": "p8"}`), nil
 	}
 	return nil, nil
 }
 
 func (h *sbxStartHost) lookPath(name string) (string, error) {
-	return "/usr/local/bin/" + name, nil
+	h.mu.Lock()
+	path, ok := h.bins[name]
+	h.mu.Unlock()
+	if ok {
+		return path, nil
+	}
+	return fakeBinary(name)
 }
 
 func (h *sbxStartHost) output(argv []string) ([]byte, error) {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
 	line := strings.Join(argv, " ")
 	switch {
+	case h.badNono && strings.Contains(line, "nono profile validate") && strings.Contains(line, "/lid/panes/"):
+		return []byte("error: unknown domain localhost\n"), errors.New("exit status 1")
+	case line == "nono --version":
+		return []byte("nono 0.74.0\n"), nil
 	case line == "sbx version":
 		return []byte("sbx version v0.54.0 4bec4a5\n"), nil
 	case strings.Contains(line, "sbx ls --json"):
@@ -1152,16 +1191,27 @@ func (h *sbxStartHost) output(argv []string) ([]byte, error) {
 }
 
 func (h *sbxStartHost) exec(argv []string, _, _ io.Writer) error {
-	h.probes = append(h.probes, argv)
+	h.record(argv)
+	if h.onExec != nil {
+		h.onExec(argv)
+	}
+	if h.execErr != nil {
+		return h.execErr(argv)
+	}
 	return nil
 }
 
 func (h *sbxStartHost) attach(argv []string, _ io.Reader, _, _ io.Writer) error {
 	h.argv = argv
+	if h.onAttach != nil {
+		return h.onAttach(argv)
+	}
 	return nil
 }
 
 func (h *sbxStartHost) ran(fragment string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, probe := range h.probes {
 		if strings.Contains(strings.Join(probe, " "), fragment) {
 			return true
@@ -1171,6 +1221,15 @@ func (h *sbxStartHost) ran(fragment string) bool {
 }
 
 func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) result {
+	t.Helper()
+	res, err := runSbxStartErr(t, cwd, h, args...)
+	if err != nil {
+		t.Fatalf("%v: %v\nstderr: %s", args, err, res.err)
+	}
+	return res
+}
+
+func runSbxStartErr(t *testing.T, cwd string, h *sbxStartHost, args ...string) (result, error) {
 	t.Helper()
 	var out, errBuf bytes.Buffer
 	var stdin io.Reader = strings.NewReader("")
@@ -1189,12 +1248,13 @@ func runSbxStart(t *testing.T, cwd string, h *sbxStartHost, args ...string) resu
 		Zellij:  zellij.Session{PaneID: h.paneID, Run: h.zellij},
 		Herdr:   herdr.Session{TerminalID: h.herdrID, Run: h.herdr},
 	}
+	if h.noAttach {
+		a.Attach = nil
+	}
 	root := NewRootCommand(a)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		t.Fatalf("%v: %v\nstderr: %s", args, err, errBuf.String())
-	}
-	return result{out: out.String(), err: errBuf.String()}
+	err := root.Execute()
+	return result{out: out.String(), err: errBuf.String()}, err
 }
 
 func TestStartKeepsTheRunningSandboxWhenTheConfigHasChanged(t *testing.T) {
@@ -1262,7 +1322,7 @@ func TestStartWarnsButStillLaunchesWhenTheSettingsCannotBeApplied(t *testing.T) 
 
 func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
+	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7"}
 
 	res := runSbxStart(t, dir, h, "start")
@@ -1270,14 +1330,14 @@ func TestStartNamesTheZellijTabItWasLaunchedFrom(t *testing.T) {
 	if !h.ran("rename-tab") {
 		t.Errorf("the tab kept its default name: %v", h.probes)
 	}
-	if strings.Contains(res.err, "zellij") {
-		t.Errorf("zellij is wired up but still reported as ignored:\n%s", res.err)
+	if strings.Contains(res.err, "deprecated") {
+		t.Errorf("warned about a config already on the current keys:\n%s", res.err)
 	}
 }
 
 func TestStartNamesTheHerdrTabItWasLaunchedFrom(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
+	write(t, dir, "lid.yaml", "name: api\nherdr:\n  display_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
 
 	res := runSbxStart(t, dir, h, "start")
@@ -1290,24 +1350,39 @@ func TestStartNamesTheHerdrTabItWasLaunchedFrom(t *testing.T) {
 	}
 }
 
-func TestStartStillNamesTheTabFromTheDeprecatedZellijKeyAndSaysToMoveIt(t *testing.T) {
+func TestStartNamesOnlyTheTerminalsThatHaveADisplayName(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "lid.yaml", "name: api\nzellij:\n  display_name: api\n")
+	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7", herdrID: "t7"}
+
+	runSbxStart(t, dir, h, "start")
+
+	if !h.ran("rename-tab") {
+		t.Errorf("the zellij tab kept its default name: %v", h.probes)
+	}
+	if h.ran("tab.rename") {
+		t.Errorf("renamed the Herdr tab with no herdr.display_name: %v", h.probes)
+	}
+}
+
+func TestStartStillNamesTheTabsFromTheDeprecatedDisplayNameAndSaysToMoveIt(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: api\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", paneID: "7", herdrID: "t7"}
 
 	res := runSbxStart(t, dir, h, "start")
 
 	if !h.ran("rename-tab") || !h.ran("tab.rename") {
-		t.Errorf("the old key no longer names the tab: %v", h.probes)
+		t.Errorf("the old key no longer names the tabs: %v", h.probes)
 	}
-	if !strings.Contains(res.err, "zellij.display_name") || !strings.Contains(res.err, "deprecated") {
-		t.Errorf("never said zellij.display_name is deprecated:\n%s", res.err)
+	if !strings.Contains(res.err, "display_name") || !strings.Contains(res.err, "deprecated") {
+		t.Errorf("never said display_name is deprecated:\n%s", res.err)
 	}
 }
 
-func TestStartPrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
+func TestStartPrefersTheHerdrDisplayNameOverTheTopLevelOne(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "lid.yaml", "name: api\ndisplay_name: new\nzellij:\n  display_name: old\n")
+	write(t, dir, "lid.yaml", "name: api\ndisplay_name: old\nherdr:\n  display_name: new\n")
 	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
 
 	runSbxStart(t, dir, h, "start")
@@ -1319,7 +1394,7 @@ func TestStartPrefersTheTopLevelDisplayNameOverTheZellijOne(t *testing.T) {
 		}
 	}
 	if !strings.HasSuffix(name, " new") {
-		t.Errorf("named the tab %q, want it after the top-level display_name: %v", name, h.probes)
+		t.Errorf("named the tab %q, want it after herdr.display_name: %v", name, h.probes)
 	}
 }
 
@@ -2247,4 +2322,42 @@ func hasGrantRow(out, label, value string) bool {
 		}
 	}
 	return false
+}
+
+func TestPaneRunIgnoresTheProjectConfig(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache)
+
+	dir := t.TempDir()
+	write(t, dir, "lid.yaml", "name: api\nbackend: sbx\nscripts:\n  on_start: touch pwned\n  bogus: [\n")
+	want := []string{"sbx", "run", "--name", "api"}
+	file, err := panes.WriteArgv(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &twoBackendHost{}
+
+	if got, err := runTwo(t, dir, h, "pane-run", file); err != nil {
+		t.Fatalf("pane-run: %v\n%s", err, got.err)
+	}
+	if !reflect.DeepEqual(h.argv, want) {
+		t.Errorf("launched %v, want %v", h.argv, want)
+	}
+	if len(h.execs) > 0 || len(h.probes) > 0 {
+		t.Errorf("did other work: execs %v, probes %v", h.execs, h.probes)
+	}
+	if _, err := os.Stat(file); err == nil {
+		t.Error("pane file was not consumed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Error("on_start ran")
+	}
+}
+
+func TestPaneRunIsHidden(t *testing.T) {
+	got, _ := run(t, t.TempDir(), "--help")
+	if strings.Contains(got.out, "pane-run") {
+		t.Errorf("pane-run is listed in help:\n%s", got.out)
+	}
 }

@@ -20,6 +20,19 @@ backend: sbx
 # working directory until the sandbox restarts.
 # clone: true
 
+# CPUs and memory for the sandbox. By default sbx gives it every host CPU and
+# half the host's memory. Changing them takes 'lid start --rebuild'.
+# resources:
+#   cpus: 4
+#   memory: 8g
+
+# Host directories mounted beside the project: HOST, HOST:ro,
+# HOST:SANDBOX_PATH or HOST:SANDBOX_PATH:ro. Without a SANDBOX_PATH the
+# directory keeps its host path inside the sandbox.
+extra_workspaces: []
+  # - ~/Developer/shared-lib:ro
+  # - ~/datasets:/workspace/data
+
 # Custom template image, which skips Dockerfile generation. When set,
 # 'packages', 'runtimes' and 'bridges' are unavailable - install and wire
 # them up in your own Dockerfile instead.
@@ -140,8 +153,16 @@ claude:
   settings: {}
     # alwaysThinkingEnabled: true
 
-# Name for the terminal tab lid starts in, inside zellij or Herdr.
-# display_name: my-project
+# Name for the terminal tab lid starts in, set for each terminal.
+# zellij:
+#   display_name: my-project
+
+# herdr:
+#   # Name for the Herdr tab lid starts in.
+#   display_name: my-project
+#   # Let the agent open Herdr panes that run a command in this sandbox.
+#   # Only takes effect inside Herdr, with the claude-code agent.
+#   panes: true
 
 # Instructions injected into the agent's memory file.
 # memory: |

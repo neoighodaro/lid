@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neoighodaro/lid/internal/config"
@@ -290,11 +291,32 @@ func (sbx) ShellArgv(h Host, cfg *config.Config, _ string, command []string) ([]
 		return []string{"sbx", "exec", "-i", "-w", dir, cfg.Name, "--", "bash", "-lc", shellCommandLine(command)}, nil
 	}
 
-	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
-		return nil, failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
-			WithFix(sbxExecFix)
+	if err := sbxWriteShellRC(h, cfg); err != nil {
+		return nil, err
 	}
 	return []string{"sbx", "exec", "-it", "-w", dir, cfg.Name, "--", "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
+}
+
+func sbxWriteShellRC(h Host, cfg *config.Config) error {
+	if out, err := h.output(sbxWriteHomeFileArgv(cfg, sbxShellRCFile, shellRC(cfg, ""))); err != nil {
+		return failure.New("cannot write the shell's init file in the %s sandbox: %s", cfg.Name, firstLine(out)).
+			WithFix(sbxExecFix)
+	}
+	return nil
+}
+
+// PaneArgv is the interactive shell with the command handed over in the
+// environment, so it stays one argv element all the way to the shell's rc file.
+func (sbx) PaneArgv(h Host, cfg *config.Config, _ string, command string) ([]string, error) {
+	exe, err := h.lookPath("sbx")
+	if err != nil {
+		return nil, failure.New("cannot find sbx on PATH: %v", err)
+	}
+	if err := sbxWriteShellRC(h, cfg); err != nil {
+		return nil, err
+	}
+	return []string{exe, "exec", "-it", "-w", shellDir(cfg, sbxProjectDir(cfg)), cfg.Name, "--",
+		"env", PaneCmdVar + "=" + command, "bash", "--rcfile", sbxHome + "/" + sbxShellRCFile, "-i"}, nil
 }
 
 // sbxProjectDir is where the project sits inside the sandbox: the workspace when
@@ -434,9 +456,23 @@ func sbxCreateArgv(cfg *config.Config) []string {
 		argv = append(argv, "-p", string(port))
 	}
 
+	if cfg.Resources.CPUs > 0 {
+		argv = append(argv, "--cpus", strconv.Itoa(cfg.Resources.CPUs))
+	}
+	if cfg.Resources.Memory != "" {
+		argv = append(argv, "--memory", strings.ToLower(cfg.Resources.Memory))
+	}
+
 	argv = append(argv, "--static-mcp", sbxStaticMCP(cfg))
 
-	return append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+	argv = append(argv, cfg.SbxAgent(), cfg.ProjectDir)
+	home, _ := os.UserHomeDir()
+	for _, entry := range cfg.ExtraWorkspaces {
+		if w, err := config.ParseExtraWorkspace(entry); err == nil {
+			argv = append(argv, w.Arg(home))
+		}
+	}
+	return argv
 }
 
 func sbxStaticMCP(cfg *config.Config) string {
@@ -593,7 +629,7 @@ func sbxNetworkArgv(cfg *config.Config, action NetworkAction, domains []string) 
 	if action == NetworkRemove {
 		argvs := make([][]string, 0, len(domains))
 		for _, domain := range domains {
-			argvs = append(argvs, []string{"sbx", "policy", "rm", "network", "--sandbox", cfg.Name, "--resource", domain})
+			argvs = append(argvs, []string{"sbx", "policy", "rm", "network", "--sandbox", cfg.Name, "--resource", domain, "--force"})
 		}
 		return argvs
 	}

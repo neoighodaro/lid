@@ -70,6 +70,7 @@ func runDoctor(a *app.App) []check {
 		return append(checks, failed("project", failure.New("no backend named %q", cfg.Backend).At(cfg.Ref())))
 	}
 	checks = append(checks, projectChecks(cfg, b)...)
+	checks = append(checks, herdrChecks(a, cfg)...)
 
 	if b.EnsureAvailable(a.SandboxHost()) != nil {
 		return append(checks, check{name: "sandbox", level: checkSkip, detail: "not checked: " + cfg.Backend + " is not ready"})
@@ -161,6 +162,19 @@ func projectChecks(cfg *config.Config, b backend.Backend) []check {
 		checks = append(checks, check{name: "project", level: checkWarn, detail: warning})
 	}
 	return checks
+}
+
+func herdrChecks(a *app.App, cfg *config.Config) []check {
+	if !cfg.Herdr.Panes {
+		return nil
+	}
+	switch {
+	case a.Herdr.TerminalID == "":
+		return []check{{name: "herdr panes", level: checkSkip, detail: "on, but lid is not running in Herdr"}}
+	case !config.IsClaudeAgent(cfg.Agent):
+		return []check{{name: "herdr panes", level: checkWarn, detail: "on, but the agent is " + cfg.Agent + " and only claude-code can open panes"}}
+	}
+	return []check{{name: "herdr panes", detail: "on"}}
 }
 
 func sandboxCheck(a *app.App, cfg *config.Config, b backend.Backend) check {

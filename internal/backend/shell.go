@@ -8,6 +8,17 @@ import (
 	"github.com/neoighodaro/lid/internal/config"
 )
 
+// PaneCmdVar carries the command a Herdr pane runs, as one environment entry so
+// it is never parsed by anything but the pane's own shell.
+const PaneCmdVar = "LID_PANE_CMD"
+
+const paneTrailer = "if [ -n \"${" + PaneCmdVar + ":-}\" ]; then\n" +
+	"  __lid_pane_cmd=$" + PaneCmdVar + "\n" +
+	"  unset " + PaneCmdVar + "\n" +
+	"  history -s \"$__lid_pane_cmd\"\n" +
+	"  eval \"$__lid_pane_cmd\"\n" +
+	"fi\n"
+
 // shellRC is the init file an interactive 'lid shell' starts under. It replaces
 // ~/.bashrc for that session, so it sources it first: the shell: block adds to
 // what the user already has rather than taking it away.
@@ -28,6 +39,7 @@ func shellRC(cfg *config.Config, dir string) string {
 	if dir != "" {
 		fmt.Fprintf(&b, "cd %s\n", shellQuote(dir))
 	}
+	b.WriteString(paneTrailer)
 	return b.String()
 }
 

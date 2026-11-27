@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/neoighodaro/lid/internal/config"
+	"github.com/neoighodaro/lid/internal/panes"
 )
 
 func cfgFor(t *testing.T, body string) *config.Config {
@@ -192,6 +194,22 @@ func TestNonoProfileRestrictsTheNetworkToTheConfiguredDomains(t *testing.T) {
 	domains, ok := network["allow_domain"].([]any)
 	if !ok || len(domains) != 1 || domains[0] != "registry.npmjs.org" {
 		t.Errorf("allow_domain = %v, want the configured domain", network["allow_domain"])
+	}
+}
+
+func TestNonoKitProfileNeverGrantsThePanesListener(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want []any
+	}{
+		{"name: api\nbackend: nono\nnetwork: [github.com]\n", []any{"github.com"}},
+		{"name: api\nbackend: nono\nnetwork: [github.com]\nherdr:\n  panes: true\n", []any{"github.com"}},
+		{"name: api\nbackend: nono\nnetwork: [localhost]\nherdr:\n  panes: true\nhandoff:\n  enabled: true\n", []any{"localhost"}},
+	} {
+		network := profileOf(t, tc.body)["network"].(map[string]any)
+		if got := network["allow_domain"]; !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: allow_domain = %v, want %v", tc.body, got, tc.want)
+		}
 	}
 }
 
@@ -491,12 +509,12 @@ func TestNonoGrantsNothingForARuntimeTheConfigDoesNotDeclare(t *testing.T) {
 	}
 }
 
-func TestNonoOmitsFilesystemWhenNoDeclaredRuntimeNeedsToWrite(t *testing.T) {
-	if fs := filesystemOf(t, "name: api\nbackend: nono\n"); fs != nil {
-		t.Errorf("a config with no runtimes still carries a filesystem section: %v", fs)
+func TestNonoGrantsNoWritesWhenNoDeclaredRuntimeNeedsToWrite(t *testing.T) {
+	if fs := filesystemOf(t, "name: api\nbackend: nono\n"); len(fs["allow"]) > 0 {
+		t.Errorf("a config with no runtimes still grants writes: %v", fs)
 	}
-	if fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  php: \"8.4\"\n"); fs != nil {
-		t.Errorf("php writes through homebrew, which lid does not grant, yet a section was written: %v", fs)
+	if fs := filesystemOf(t, "name: api\nbackend: nono\nruntimes:\n  php: \"8.4\"\n"); len(fs["allow"]) > 0 {
+		t.Errorf("php writes through homebrew, which lid does not grant, yet writes were granted: %v", fs)
 	}
 }
 
@@ -796,11 +814,32 @@ func TestNonoGrantsTheHostPathsTheConfigNames(t *testing.T) {
 	}
 }
 
-func TestNonoLeavesTheFilesystemSectionOutWhenNothingNeedsIt(t *testing.T) {
-	profile := profileOf(t, "name: api\nbackend: nono\n")
+func TestNonoDeniesOnlyLidsCacheDirWhenNothingElseNeedsTheFilesystem(t *testing.T) {
+	fs := filesystemOf(t, "name: api\nbackend: nono\n")
 
-	if section, ok := profile["filesystem"]; ok {
-		t.Errorf("filesystem = %v, want the section left out entirely", section)
+	if len(fs) != 1 || len(fs["deny"]) != 2 {
+		t.Errorf("filesystem = %v, want only lid's own denies", fs)
+	}
+}
+
+func TestNonoDeniesTheAgentLidsPaneDir(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache)
+	root, _ := panes.Root()
+	dir, _ := panes.Path()
+
+	for name, body := range map[string]string{
+		"bare":            "name: api\nbackend: nono\n",
+		"cache dir grant": "name: api\nbackend: nono\npaths:\n  allow:\n    - ~/\n",
+	} {
+		fs := filesystemOf(t, body)
+		for _, want := range []string{root, dir} {
+			want = "$HOME/" + strings.TrimPrefix(want, cache+"/")
+			if !hasGroup(fs["deny"], want) {
+				t.Errorf("%s: the agent can write %s, where lid keeps what runs on the host: %v", name, want, fs)
+			}
+		}
 	}
 }
 
