@@ -572,6 +572,7 @@ func TestOpenPaneKeepsTheCommandOutOfHerdrArgv(t *testing.T) {
 		}
 		got := paneSplitArgv(t, h.splits[0])
 		exe, _ := os.Executable()
+		exe, _ = filepath.EvalSymlinks(exe)
 		if len(got) != 3 || got[0] != exe || got[1] != "pane-run" || filepath.Dir(got[2]) != panesDir(t) {
 			t.Fatalf("herdr argv = %q", got)
 		}
@@ -757,8 +758,14 @@ func TestPrivateProfileDeniesTheAgentLidsPaneDir(t *testing.T) {
 
 	runSbxStart(t, dir, h, "start")
 
+	rel, err := filepath.Rel(os.Getenv("HOME"), panesDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pd := `"$HOME/` + filepath.ToSlash(rel) + `"`
+	cache := `"$HOME/` + filepath.ToSlash(filepath.Dir(rel)) + `"`
 	for name, profile := range map[string]string{"session": body, "project": read(t, kitProfile(dir))} {
-		for _, want := range []string{`"$HOME/lid"`, `"$HOME/lid/panes"`} {
+		for _, want := range []string{cache, pd} {
 			if !strings.Contains(profile, want) {
 				t.Errorf("the %s profile lets the agent write %s:\n%s", name, want, profile)
 			}
