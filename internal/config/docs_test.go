@@ -12,12 +12,27 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := append(yamlKeys(reflect.TypeOf(Config{}), ""), sectionsKey)
-	for _, key := range keys {
-		if !strings.Contains(string(doc), "`"+key+"`") {
-			t.Errorf("docs/configuration.md does not document `%s`", key)
+	var headings []string
+	for _, line := range strings.Split(string(doc), "\n") {
+		if strings.HasPrefix(line, "#") {
+			headings = append(headings, line)
 		}
 	}
+	keys := append(yamlKeys(reflect.TypeOf(Config{}), ""), sectionsKey)
+	for _, key := range keys {
+		if !headingNames(headings, key) {
+			t.Errorf("docs/configuration.md has no heading for `%s`", key)
+		}
+	}
+}
+
+func headingNames(headings []string, key string) bool {
+	for _, heading := range headings {
+		if strings.Contains(heading, "`"+key+"`") {
+			return true
+		}
+	}
+	return false
 }
 
 func yamlKeys(t reflect.Type, prefix string) []string {
