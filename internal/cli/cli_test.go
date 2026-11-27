@@ -1113,6 +1113,7 @@ type sbxStartHost struct {
 	noAttach bool
 	bins     map[string]string
 	badNono  bool
+	execErr  func(argv []string) error
 }
 
 func (h *sbxStartHost) record(argv []string) {
@@ -1192,6 +1193,9 @@ func (h *sbxStartHost) exec(argv []string, _, _ io.Writer) error {
 	h.record(argv)
 	if h.onExec != nil {
 		h.onExec(argv)
+	}
+	if h.execErr != nil {
+		return h.execErr(argv)
 	}
 	return nil
 }

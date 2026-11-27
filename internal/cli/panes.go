@@ -391,11 +391,13 @@ func allowPanes(a *app.App, b backend.Backend, cfg *config.Config, s *paneSessio
 		return nil, err
 	}
 	remove := func() {
-		b.Network(quiet(s.host), cfg, backend.NetworkRemove, []string{resource})
-		os.Remove(record)
+		if b.Network(quiet(s.host), cfg, backend.NetworkRemove, []string{resource}) == nil {
+			os.Remove(record)
+		}
 	}
 	if err := b.Network(s.host, cfg, backend.NetworkAllow, []string{resource}); err != nil {
-		remove()
+		b.Network(quiet(s.host), cfg, backend.NetworkRemove, []string{resource})
+		os.Remove(record)
 		return nil, err
 	}
 	return remove, nil
@@ -423,8 +425,9 @@ func removeLeftoverPaneRules(a *app.App, b backend.Backend, cfg *config.Config, 
 				continue
 			}
 		}
-		b.Network(quietHost(a), cfg, backend.NetworkRemove, []string{"localhost:" + port})
-		os.Remove(record)
+		if b.Network(quietHost(a), cfg, backend.NetworkRemove, []string{"localhost:" + port}) == nil {
+			os.Remove(record)
+		}
 	}
 }
 

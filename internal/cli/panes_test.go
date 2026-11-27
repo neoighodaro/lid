@@ -438,11 +438,56 @@ func TestStopRemovesALeftoverPanesRule(t *testing.T) {
 
 	runSbxStart(t, dir, h, "stop")
 
-	if !h.ran("sbx policy rm network --sandbox api --resource localhost:4242") {
+	if !h.ran("sbx policy rm network --sandbox api --resource localhost:4242 --force") {
 		t.Errorf("stop left the rule in place: %v", h.probes)
 	}
 	if _, err := os.Stat(filepath.Join(pd, "api.4242.port")); err == nil {
 		t.Error("the leftover record was kept")
+	}
+}
+
+func TestStopKeepsThePanesRecordWhenTheRuleStays(t *testing.T) {
+	dir := panesProject(t, "")
+	pd := panesDir(t)
+	write(t, pd, "api.4242.port", strconv.Itoa(deadPID(t)))
+	h := &sbxStartHost{sandbox: "api", list: sbxRunningAPI}
+	h.execErr = func(argv []string) error {
+		if strings.Contains(strings.Join(argv, " "), "policy rm network") {
+			return errors.New("sbx refused")
+		}
+		return nil
+	}
+
+	runSbxStart(t, dir, h, "stop")
+
+	if _, err := os.Stat(filepath.Join(pd, "api.4242.port")); err != nil {
+		t.Error("dropped the record of a rule sbx did not remove, so nothing will retry it")
+	}
+}
+
+func TestStartKeepsThePanesRecordWhenItsRuleStays(t *testing.T) {
+	dir := panesProject(t, "")
+	pd := panesDir(t)
+	h := &sbxStartHost{sandbox: "api", settings: "{}", herdrID: "t7"}
+	var port int
+	h.onAttach = func(argv []string) error {
+		port = endpointOf(t, argv).port
+		h.execErr = func(argv []string) error {
+			if strings.Contains(strings.Join(argv, " "), "policy rm network") {
+				return errors.New("sbx refused")
+			}
+			return nil
+		}
+		return nil
+	}
+
+	runSbxStart(t, dir, h, "start")
+
+	if !h.ran(fmt.Sprintf("policy rm network --sandbox api --resource localhost:%d --force", port)) {
+		t.Errorf("the session did not remove its rule without a prompt: %v", h.probes)
+	}
+	if _, err := os.Stat(filepath.Join(pd, fmt.Sprintf("api.%d.port", port))); err != nil {
+		t.Error("dropped the record of a rule sbx did not remove, so nothing will retry it")
 	}
 }
 

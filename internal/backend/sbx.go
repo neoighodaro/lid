@@ -629,7 +629,7 @@ func sbxNetworkArgv(cfg *config.Config, action NetworkAction, domains []string) 
 	if action == NetworkRemove {
 		argvs := make([][]string, 0, len(domains))
 		for _, domain := range domains {
-			argvs = append(argvs, []string{"sbx", "policy", "rm", "network", "--sandbox", cfg.Name, "--resource", domain})
+			argvs = append(argvs, []string{"sbx", "policy", "rm", "network", "--sandbox", cfg.Name, "--resource", domain, "--force"})
 		}
 		return argvs
 	}

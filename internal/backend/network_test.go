@@ -75,8 +75,8 @@ func TestSbxRemovesOneHostPerCall(t *testing.T) {
 	}
 
 	want := []string{
-		"sbx policy rm network --sandbox api --resource github.com",
-		"sbx policy rm network --sandbox api --resource pypi.org",
+		"sbx policy rm network --sandbox api --resource github.com --force",
+		"sbx policy rm network --sandbox api --resource pypi.org --force",
 	}
 	got := h.lines()
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
